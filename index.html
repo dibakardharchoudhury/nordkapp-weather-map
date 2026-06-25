@@ -425,7 +425,7 @@
     //      rotating mirrors, so one slow/dead mirror can't stall everything.
     //   4) mirror rotation + cooldown — a 429/timeout parks that mirror for a
     //      minute and we move straight on to the next one (or to Photon / a proxy).
-    const POI_CACHE_PREFIX = "np_poi_v6_";
+    const POI_CACHE_PREFIX = "np_poi_v8_";
     const POI_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — POIs are quasi-static
     const OP_COOLDOWN_MS = 60000;                // park a throttled mirror this long
     function poiKey(lat, lon) { return POI_CACHE_PREFIX + (+lat).toFixed(4) + "_" + (+lon).toFixed(4); }
@@ -1068,26 +1068,35 @@
     async function overpass(lat, lon) {
       const q = overpassQuery(lat, lon);
       const body = "data=" + encodeURIComponent(q);
-      const eps = OVERPASS_ENDPOINTS, n = eps.length;
-      const start = _opTick++ % n; // each concurrent call begins on a different mirror
-      let lastErr;
-      // 1) Direct POST to the mirrors — fastest path when the IP isn't throttled.
-      for (let i = 0; i < n; i++) {
-        const ep = eps[(start + i) % n];
-        if (_opCooldown[ep] && Date.now() < _opCooldown[ep]) continue; // parked mirror — skip
-        try {
-          return await fetchJsonTimed(ep, { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded" } });
-        } catch (e) {
-          lastErr = e;
-          if (e.status === 429 || e.status === 503 || e.status === 504) _opCooldown[ep] = Date.now() + OP_COOLDOWN_MS;
+      // Race EVERY healthy mirror in parallel and take the first valid response.
+      // One mirror being up is enough, so a slow/dead/over-loaded mirror can no
+      // longer stall the request or let it lose the race to the lean Photon
+      // source — this is what reliably surfaces the rich tags (opening_hours,
+      // toilets, coffee) that only Overpass carries.
+      const healthy = OVERPASS_ENDPOINTS.filter((ep) => !(_opCooldown[ep] && Date.now() < _opCooldown[ep]));
+      const pool = healthy.length ? healthy : OVERPASS_ENDPOINTS; // all parked → try them anyway
+      const attempts = pool.map((ep) =>
+        fetchJsonTimed(ep, { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded" } })
+          .then((j) => {
+            if (!j || !Array.isArray(j.elements)) throw new Error("bad Overpass payload");
+            return j;
+          })
+          .catch((e) => {
+            if (e.status === 429 || e.status === 503 || e.status === 504) _opCooldown[ep] = Date.now() + OP_COOLDOWN_MS;
+            throw e;
+          })
+      );
+      try {
+        return await Promise.any(attempts); // first mirror to return valid JSON wins
+      } catch {
+        // Every direct mirror failed — retry through CORS proxies (different egress
+        // IP) so a visitor-IP rate limit still doesn't leave the card empty.
+        const getUrl = OVERPASS_ENDPOINTS[0] + "?data=" + encodeURIComponent(q);
+        for (const wrap of OVERPASS_PROXIES) {
+          try { return await fetchJsonTimed(wrap(getUrl)); } catch {}
         }
+        throw new Error("Overpass busy");
       }
-      // 2) Keyless fallback — same query through a CORS proxy (different egress IP).
-      const getUrl = eps[start] + "?data=" + encodeURIComponent(q);
-      for (const wrap of OVERPASS_PROXIES) {
-        try { return await fetchJsonTimed(wrap(getUrl)); } catch (e) { lastErr = e; }
-      }
-      throw lastErr || new Error("Overpass busy");
     }
     // Photon (komoot) — a second, fully keyless OSM provider on separate
     // infrastructure from Overpass. Its reverse endpoint returns nearby named
@@ -1173,13 +1182,17 @@
         if (!name || !co) continue;
         const d = distKm(stop.lat, stop.lon, co[1], co[0]); // Photon coords are [lon, lat]
         const key = p.osm_key, val = p.osm_value;
+        // Photon already returns "N" / "W" / "R" — exactly the prefix Nominatim's
+        // /lookup wants, so we can later enrich this exact OSM object with the
+        // opening_hours / toilets / cuisine tags Photon omits.
+        const oid = (p.osm_type && p.osm_id != null) ? (p.osm_type + p.osm_id) : null;
         if (PRIO[key] != null && d <= 0.7) {
           const score = PRIO[key] * 5 + d;
           if (score < bestScore) { bestScore = score; bestPoi = { name, type: friendlyType(key, val) }; }
         }
-        if (key === "amenity" && FOOD[val] && d <= 5) food.push({ name, icon: foodIcon({ amenity: val, name }), hours: "", dist: d });
-        else if (key === "shop" && SHOP[val] && d <= 5) shops.push({ name, icon: "🛒", hours: "", dist: d });
-        else if (key === "amenity" && val === "fuel" && d <= 5) fuel.push({ name, icon: "⛽", hours: "", dist: d, coffee: fuelHasCoffee({ name }), toilet: fuelHasToilet({ name }) });
+        if (key === "amenity" && FOOD[val] && d <= 5) food.push({ name, icon: foodIcon({ amenity: val, name }), hours: "", dist: d, oid });
+        else if (key === "shop" && SHOP[val] && d <= 5) shops.push({ name, icon: "🛒", hours: "", dist: d, oid });
+        else if (key === "amenity" && val === "fuel" && d <= 5) fuel.push({ name, icon: "⛽", hours: "", dist: d, oid, coffee: fuelHasCoffee({ name }), toilet: fuelHasToilet({ name }) });
         // Recover a co-located eatery named on a charger / fuel node (OSM gap).
         if (key === "amenity" && (val === "charging_station" || val === "fuel") && d <= 5) {
           const brand = brandFromName(name);
@@ -1194,41 +1207,83 @@
       g.shops = dedupe(shops).slice(0, 3);
       g.fuel = dedupe(fuel).slice(0, 3);
     }
+    // Nominatim /lookup enriches the EXACT OSM objects Photon found with the rich
+    // tags Photon omits — opening_hours, toilets, cuisine — keyed by osm id. It is
+    // a single batched, keyless, CORS-enabled request that returns in well under a
+    // second, so it is the reliable primary source of the hours / coffee / toilet
+    // chips instead of the flaky public Overpass mirrors.
+    async function nominatimLookup(ids) {
+      const out = {};
+      if (!ids.length) return out;
+      const url = `https://nominatim.openstreetmap.org/lookup?format=jsonv2&extratags=1&osm_ids=${ids.slice(0, 50).join(",")}`;
+      const arr = await getJson(url);
+      const ABBR = { node: "N", way: "W", relation: "R" };
+      for (const x of (arr || [])) out[(ABBR[x.osm_type] || "") + x.osm_id] = x.extratags || {};
+      return out;
+    }
+    // Fill in opening_hours for every discovered POI, plus coffee/toilet for fuel
+    // stations, from one batched Nominatim lookup. Only ever UPGRADES a field
+    // (never clears one), so it is safe to run after the card is already painted.
+    async function enrichNominatim(stop, g, pri) {
+      const items = [].concat(g.food || [], g.shops || [], g.fuel || []);
+      const ids = [...new Set(items.map((x) => x.oid).filter(Boolean))];
+      if (!ids.length) return false;
+      let map;
+      try { map = await nomPool.add(() => nominatimLookup(ids), stop, !!pri); }
+      catch { return false; }
+      const fuelSet = new Set(g.fuel || []);
+      let changed = false;
+      for (const x of items) {
+        const ex = x.oid && map[x.oid];
+        if (!ex) continue;
+        if (ex.opening_hours && ex.opening_hours !== x.hours) { x.hours = ex.opening_hours; changed = true; }
+        if (fuelSet.has(x)) {
+          if (!x.coffee && fuelHasCoffee(ex)) { x.coffee = true; changed = true; }
+          if (!x.toilet && fuelHasToilet(ex)) { x.toilet = true; changed = true; }
+        }
+      }
+      return changed;
+    }
     function gHasNearby(g) {
       return !!(g && (g.place || (g.food && g.food.length) ||
         (g.shops && g.shops.length) || (g.fuel && g.fuel.length)));
     }
-    // One keyless path for every stop. A background prewarm uses only the lenient
-    // Photon provider (gentle, no 429). A click also queries Overpass, which is the
-    // ONLY source that carries the full OSM tags — coffee, toilets and
-    // opening_hours — so on a click we PREFER the Overpass result and fall back to
-    // Photon only if it returns nothing. The whole thing is capped at 5 s.
+    // One keyless path for every stop. Discovery comes from Photon (komoot) —
+    // fast, reliable, CORS-clean — and the rich tags Photon omits (opening_hours,
+    // toilets, coffee) are then filled in by a single batched Nominatim /lookup of
+    // the exact OSM ids Photon returned. Both are quick and dependable, so this is
+    // the primary path for BOTH the background prewarm and a click. The public
+    // Overpass mirrors are slow and frequently time out or return empty from a
+    // browser, so they are now only a last-resort fallback used on a click when
+    // Photon itself finds nothing.
     async function loadNearby(stop, g, useOverpass) {
-      const NEARBY_BUDGET_MS = 5000;
-      let responded = false; // did at least one provider actually return an answer?
-      // Photon is the lenient provider and carries every background prewarm; the
-      // heavier Overpass mirrors are only queried on demand (a click) so a page
-      // load never bursts dozens of Overpass requests and trips HTTP 429.
-      const ph = phPool.add(() => photon(stop.lat, stop.lon), stop, !!useOverpass).then(
+      let responded = false;
+      const apply = (t) => {
+        if (!t || !gHasNearby(t)) return false;
+        g.place = t.place; g.food = t.food; g.shops = t.shops; g.fuel = t.fuel;
+        refreshStop(stop);
+        return true;
+      };
+      // PRIMARY — Photon discovery.
+      const pt = await phPool.add(() => photon(stop.lat, stop.lon), stop, !!useOverpass).then(
         (d) => { responded = true; const t = {}; parsePhoton(stop, t, d); return t; },
         () => null
       );
-      const op = useOverpass
-        ? opPool.add(() => overpass(stop.lat, stop.lon), stop, true).then(
-            (d) => { responded = true; const t = {}; parseOverpass(stop, t, d); return t; },
-            () => null
-          )
-        : Promise.resolve(null);
-      const timeout = new Promise((r) => setTimeout(() => r("TIMEOUT"), NEARBY_BUDGET_MS));
-      // On a click prefer tag-rich Overpass; for a prewarm just take Photon. Both
-      // requests already run in parallel — this only decides which result wins.
-      const pick = useOverpass
-        ? (async () => { const a = await op; if (gHasNearby(a)) return a; const b = await ph; return gHasNearby(b) ? b : a; })()
-        : (async () => { const a = await ph; if (gHasNearby(a)) return a; return await op; })();
-      const winner = await Promise.race([pick, timeout]);
-      const chosen = (winner && winner !== "TIMEOUT" && gHasNearby(winner)) ? winner : null;
-      if (chosen) { g.place = chosen.place; g.food = chosen.food; g.shops = chosen.shops; g.fuel = chosen.fuel; }
-      return responded; // false ⇒ everything failed; caller keeps the entry revalidatable
+      if (apply(pt)) {
+        // ENRICH — add opening_hours / coffee / toilet from Nominatim's extratags,
+        // keyed by the exact OSM objects Photon found, and repaint in place.
+        try { if (await enrichNominatim(stop, g, !!useOverpass)) refreshStop(stop); } catch {}
+        return responded;
+      }
+      // FALLBACK — Photon found nothing. On a click only, try the heavier Overpass
+      // mirrors (separate infrastructure) so the card still has a chance to fill.
+      if (!useOverpass) return responded;
+      const od = await opPool.add(() => overpass(stop.lat, stop.lon), stop, true).then(
+        (d) => { responded = true; const t = {}; parseOverpass(stop, t, d); return t; },
+        () => null
+      );
+      apply(od);
+      return responded;
     }
     async function loadPlace(stop, opts) {
       opts = opts || {};
@@ -1268,9 +1323,10 @@
         }, stop, pri));
       }
       jobs.push((async () => {
-        // Background prewarm uses Photon only (gentle, no 429); a click (priority)
-        // adds the fuller Overpass result — incl. charger-name food like the
-        // Recharge McDonald's at Eidsvoll Verk — and upgrades the cached entry.
+        // Photon discovery + a batched Nominatim enrichment (opening_hours,
+        // coffee, toilets) runs for both the background prewarm and a click, so a
+        // cached entry is already complete; a click only adds the Overpass
+        // fallback when Photon found nothing.
         try { g._poiOk = await loadNearby(stop, g, pri); } catch { g._poiOk = false; }
         refreshStop(stop);
       })());
@@ -1278,10 +1334,10 @@
       await Promise.allSettled(jobs);
       stop._gState = "done";
       const poiOk = g._poiOk === true;
-      // A click (priority) ran the full Photon+Overpass race, so its result is
-      // trusted; a background Photon-only prewarm is always kept revalidatable so
-      // the first click upgrades it with the fuller Overpass data.
-      stop._poiPartial = pri ? !poiOk : true;
+      // Photon + Nominatim give the same complete result on a prewarm as on a
+      // click, so any successful load is trusted; only a load that returned
+      // nothing stays revalidatable so the next click can retry (incl. Overpass).
+      stop._poiPartial = !poiOk;
       // Persist whenever we have *something*; partial entries are revalidated on
       // the next click instead of being trusted as a final "nothing nearby".
       if (g.locality || gHasNearby(g)) {
