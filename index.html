@@ -207,6 +207,25 @@
     .legend .lg { display: inline-flex; align-items: center; gap: 6px; }
     .legend .sw { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1px var(--cp-border); }
 
+    /* Clicked-stop details panel */
+    .details { padding: 16px; border-top: 1px solid var(--cp-border); }
+    .details-empty { color: var(--cp-text-muted); font-size: 0.92rem; }
+    .det-head { display: flex; align-items: flex-start; gap: 12px; }
+    .det-icon { font-size: 1.9rem; line-height: 1; }
+    .det-name { font-weight: 700; font-size: 1.1rem; }
+    .det-sub { font-size: 0.78rem; color: var(--cp-text-muted); text-transform: uppercase; letter-spacing: .03em; margin-top: 2px; font-weight: 600; }
+    .det-coords a { color: var(--cp-link); text-decoration: none; font-size: 0.8rem; }
+    .det-coords a:hover { text-decoration: underline; }
+    .det-badge { margin-left: auto; align-self: flex-start; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 3px 10px; border-radius: 999px; background: var(--cp-accent-soft); color: var(--cp-accent); white-space: nowrap; }
+    .det-wx { display: flex; align-items: center; gap: 18px; margin-top: 14px; flex-wrap: wrap; }
+    .det-wx .big { font-size: 2.6rem; line-height: 1; }
+    .det-temps .range { font-size: 1.5rem; font-weight: 700; }
+    .det-temps .range .hi { color: var(--cp-danger); }
+    .det-temps .range .lo { color: var(--cp-link); }
+    .det-temps .desc { font-size: 0.86rem; color: var(--cp-text-muted); }
+    .det-metrics { display: flex; gap: 20px; flex-wrap: wrap; font-size: 0.88rem; color: var(--cp-text-muted); }
+    .det-metrics b { color: var(--cp-text); font-weight: 600; }
+
     footer.note {
       margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--cp-border);
       font-size: 0.8rem; color: var(--cp-text-soft);
@@ -235,6 +254,7 @@
       </div>
       <div id="leaflet"></div>
       <div class="legend" id="legend"></div>
+      <div class="details" id="details"><div class="details-empty">📍 Click any stop on the map to see its full details and weather here.</div></div>
     </div>
 
     <footer class="note">
@@ -391,6 +411,38 @@
               <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${wx}
               <div class="pop-sub"><a href="https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}" target="_blank" rel="noopener">${stop.lat.toFixed(4)}, ${stop.lon.toFixed(4)} ↗</a></div>`;
     }
+
+    // ---- Clicked-stop details panel (below the map) ----
+    let selected = null;
+    function detailsHtml(stop, day, color) {
+      const w = stop._wx;
+      const wx = !w
+        ? `<div class="det-sub" style="margin-top:12px">Loading weather…</div>`
+        : `<div class="det-wx">
+             <span class="big">${w.icon}</span>
+             <div class="det-temps">
+               <div class="range"><span class="hi">${fmt(w.tmax)}°</span> / <span class="lo">${fmt(w.tmin)}°</span>C</div>
+               <div class="desc">${w.text}</div>
+             </div>
+             <div class="det-metrics">
+               <span>💨 <b>${fmt(w.wind)}</b> km/h${w.gust != null ? ` · gust <b>${fmt(w.gust)}</b>` : ""}</span>
+               <span>🌧️ <b>${w.psum != null ? fmt(w.psum) : "—"}</b> mm${w.pprob != null ? ` · <b>${fmt(w.pprob)}%</b> chance` : ""}</span>
+             </div>
+           </div>`;
+      return `<div class="det-head">
+                <span class="det-icon">${TYPE_ICON[stop.type] || "📍"}</span>
+                <div>
+                  <div class="det-name">${stop.name}</div>
+                  <div class="det-sub" style="color:${color}">${day.label} · ${day.title}</div>
+                  <div class="det-coords"><a href="https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}" target="_blank" rel="noopener">${stop.lat.toFixed(4)}, ${stop.lon.toFixed(4)} ↗ open in Google Maps</a></div>
+                </div>
+                <span class="det-badge">${TYPE_LABEL[stop.type] || "Stop"}</span>
+              </div>${wx}`;
+    }
+    function showDetails(stop, day, color) {
+      selected = { stop, day, color };
+      document.getElementById("details").innerHTML = detailsHtml(stop, day, color);
+    }
     function renderMap() {
       if (!map) return;
       layer.clearLayers();
@@ -403,6 +455,7 @@
             .bindPopup(popupHtml(s, d, color));
           m.addTo(layer);
           s._marker = m;
+          m.on("click", () => showDetails(s, d, color));
           line.push([s.lat, s.lon]);
           bounds.push([s.lat, s.lon]);
         });
@@ -508,6 +561,7 @@
           // Stash weather on the stop and refresh its map popup
           s._wx = { tmax, tmin, wind, gust, psum, pprob, icon, text };
           if (s._marker) s._marker.setPopupContent(popupHtml(s, d, color));
+          if (selected && selected.stop === s) showDetails(s, d, color);
         });
 
         const rng = document.getElementById(`rng-${d.day}`);
