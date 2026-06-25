@@ -425,7 +425,7 @@
     //      rotating mirrors, so one slow/dead mirror can't stall everything.
     //   4) mirror rotation + cooldown — a 429/timeout parks that mirror for a
     //      minute and we move straight on to the next one (or to Photon / a proxy).
-    const POI_CACHE_PREFIX = "np_poi_v4_";
+    const POI_CACHE_PREFIX = "np_poi_v5_";
     const POI_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — POIs are quasi-static
     const OP_COOLDOWN_MS = 60000;                // park a throttled mirror this long
     function poiKey(lat, lon) { return POI_CACHE_PREFIX + (+lat).toFixed(4) + "_" + (+lon).toFixed(4); }
@@ -491,9 +491,10 @@
         }
       };
     }
-    const opPool = makePool(2, 400);   // POI providers: 2 in flight, gentle stagger (keeps Photon under its CORS throttle)
+    const opPool = makePool(1, 1200);  // Overpass: one at a time, on demand only — never bursts the shared mirrors (no 429)
+    const phPool = makePool(2, 500);   // Photon: light parallelism, carries the background prewarm and click revalidation
     const nomPool = makePool(1, 1100); // Nominatim: one at a time, ~1 req/s
-    function bumpStop(stop) { opPool.bump(stop); nomPool.bump(stop); }
+    function bumpStop(stop) { opPool.bump(stop); phPool.bump(stop); nomPool.bump(stop); }
 
     // ---- Offline fallback stops (used only if the live Google My Maps KML can't be
     //      reached). Mirrors the Google map in travel order. day / date / title are
@@ -885,8 +886,9 @@
       if (h === "24/7") return "Open 24/7";
       return h.replace(/;\s*/g, " · ");
     }
-    // Remembers which POI sections the user collapsed, so re-renders keep their choice.
-    const poiCollapsed = { food: false, shops: false, fuel: false };
+    // POI sections start collapsed; a click expands them. We remember each section's
+    // open/closed state so re-renders (live data arriving, revisits) keep the choice.
+    const poiCollapsed = { food: true, shops: true, fuel: true };
     function poiToggle(key, el) { if (key in poiCollapsed) poiCollapsed[key] = !el.open; }
 
     function nearList(title, key, items, done, emptyMsg) {
@@ -1189,15 +1191,22 @@
     // keep whichever independent provider returns usable data first. If one is
     // throttled the other still answers, and the race is capped at 5 s so a click
     // is never left waiting — the localStorage cache then makes repeats instant.
-    async function loadNearby(stop, g) {
+    async function loadNearby(stop, g, useOverpass) {
       const NEARBY_BUDGET_MS = 5000;
       let responded = false; // did at least one provider actually return an answer?
-      const run = (fetcher, parser) => fetcher(stop.lat, stop.lon).then(
-        (d) => { responded = true; const t = {}; parser(stop, t, d); return t; },
+      // Photon is the lenient provider and carries every background prewarm; the
+      // heavier Overpass mirrors are only queried on demand (a click) so a page
+      // load never bursts dozens of Overpass requests and trips HTTP 429.
+      const ph = phPool.add(() => photon(stop.lat, stop.lon), stop, !!useOverpass).then(
+        (d) => { responded = true; const t = {}; parsePhoton(stop, t, d); return t; },
         () => null
       );
-      const op = run(overpass, parseOverpass);
-      const ph = run(photon, parsePhoton);
+      const op = useOverpass
+        ? opPool.add(() => overpass(stop.lat, stop.lon), stop, true).then(
+            (d) => { responded = true; const t = {}; parseOverpass(stop, t, d); return t; },
+            () => null
+          )
+        : Promise.resolve(null);
       const timeout = new Promise((r) => setTimeout(() => r("TIMEOUT"), NEARBY_BUDGET_MS));
       const winner = await Promise.race([
         (async () => { const t = await ph; return gHasNearby(t) ? t : await op; })(),
@@ -1245,20 +1254,25 @@
           refreshStop(stop);
         }, stop, pri));
       }
-      jobs.push(opPool.add(async () => {
-        try { g._poiOk = await loadNearby(stop, g); } catch { g._poiOk = false; }
+      jobs.push((async () => {
+        // Background prewarm uses Photon only (gentle, no 429); a click (priority)
+        // adds the fuller Overpass result — incl. charger-name food like the
+        // Recharge McDonald's at Eidsvoll Verk — and upgrades the cached entry.
+        try { g._poiOk = await loadNearby(stop, g, pri); } catch { g._poiOk = false; }
         refreshStop(stop);
-      }, stop, pri));
+      })());
 
       await Promise.allSettled(jobs);
       stop._gState = "done";
       const poiOk = g._poiOk === true;
-      stop._poiPartial = !poiOk; // POIs unconfirmed ⇒ let a later click/visit revalidate
-      // Persist whenever we have *something*; mark the entry partial when the POI
-      // providers failed, so it is revalidated next time instead of being trusted
-      // as a final "nothing nearby".
+      // A click (priority) ran the full Photon+Overpass race, so its result is
+      // trusted; a background Photon-only prewarm is always kept revalidatable so
+      // the first click upgrades it with the fuller Overpass data.
+      stop._poiPartial = pri ? !poiOk : true;
+      // Persist whenever we have *something*; partial entries are revalidated on
+      // the next click instead of being trusted as a final "nothing nearby".
       if (g.locality || gHasNearby(g)) {
-        poiCacheSet(stop.lat, stop.lon, g, !poiOk);
+        poiCacheSet(stop.lat, stop.lon, g, stop._poiPartial);
       }
       refreshStop(stop);
     }
