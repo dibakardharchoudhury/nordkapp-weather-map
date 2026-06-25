@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nordkapp Roadtrip · Weather</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <link rel="preconnect" href="https://api.open-meteo.com" crossorigin />
+  <link rel="preconnect" href="https://a.tile.openstreetmap.org" crossorigin />
+  <link rel="preconnect" href="https://b.tile.openstreetmap.org" crossorigin />
+  <link rel="preconnect" href="https://c.tile.openstreetmap.org" crossorigin />
+  <script>
+    // Clawpilot theme detection — runs before anything else
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("scoutTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--cp-bg);
+      color: var(--cp-text);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
+
+    header.hero {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+      gap: 16px; margin-bottom: 22px;
+    }
+    .hero h1 { font-size: 1.7rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+    .hero .sub { color: var(--cp-text-muted); font-size: 0.95rem; }
+    .hero .badge {
+      display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: 999px;
+      background: var(--cp-accent-soft); color: var(--cp-accent); font-size: 0.8rem; font-weight: 600;
+    }
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    button.btn {
+      font-family: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+      border: 1px solid var(--cp-border); background: var(--cp-surface); color: var(--cp-text);
+      padding: 8px 14px; border-radius: 0.625rem; transition: all .15s ease;
+    }
+    button.btn:hover { border-color: var(--cp-border-strong); }
+    button.btn.primary { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
+    button.btn.primary:hover { background: var(--cp-accent-hover); }
+    button.btn:disabled { opacity: .55; cursor: default; }
+
+    .card {
+      background: var(--cp-surface); border: 1px solid var(--cp-border);
+      border-radius: 16px; box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14);
+    }
+
+    .map-card { overflow: hidden; margin-bottom: 22px; }
+    .map-card .map-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 12px 16px; border-bottom: 1px solid var(--cp-border);
+    }
+    .map-card .map-head h2 { font-size: 1rem; margin: 0; }
+    .map-card .map-head a { color: var(--cp-link); text-decoration: none; font-size: 0.85rem; font-weight: 600; }
+    .map-card .map-head a:hover { text-decoration: underline; }
+    .map-frame { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 360px; }
+    .map-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+    .status {
+      font-size: 0.85rem; color: var(--cp-text-muted); margin: 0 0 18px;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cp-text-soft); display: inline-block; }
+    .dot.ok { background: var(--cp-success); }
+    .dot.warn { background: var(--cp-warning); }
+    .dot.err { background: var(--cp-danger); }
+
+    .day { margin-bottom: 26px; }
+    .day-head {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+      flex-wrap: wrap; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid var(--cp-accent-soft);
+    }
+    .day-head .t { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .day-head h2 { font-size: 1.18rem; margin: 0; }
+    .day-head .meta { color: var(--cp-text-muted); font-size: 0.9rem; }
+    .day-summary {
+      font-size: 0.85rem; color: var(--cp-text-muted); display: flex; gap: 14px; flex-wrap: wrap;
+    }
+    .day-summary b { color: var(--cp-text); font-weight: 600; }
+
+    .stops { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+    .stop {
+      background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 14px;
+      padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;
+    }
+    .stop .top { display: flex; align-items: flex-start; gap: 10px; }
+    .stop .icon { font-size: 1.35rem; line-height: 1.3; }
+    .stop .name { font-weight: 600; font-size: 0.98rem; }
+    .stop .coords { font-size: 0.76rem; color: var(--cp-text-soft); }
+    .stop .coords a { color: var(--cp-link); text-decoration: none; }
+    .stop .coords a:hover { text-decoration: underline; }
+    .tag {
+      margin-left: auto; font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .03em; padding: 2px 8px; border-radius: 999px;
+      background: var(--cp-surface-soft); color: var(--cp-text-muted); white-space: nowrap;
+    }
+    .tag.overnight { background: var(--cp-highlight); color: var(--cp-accent); }
+
+    .wx {
+      display: flex; align-items: center; gap: 12px; padding-top: 10px;
+      border-top: 1px dashed var(--cp-border);
+    }
+    .wx .wx-icon { font-size: 1.9rem; line-height: 1; }
+    .wx .temps { display: flex; flex-direction: column; }
+    .wx .temps .range { font-size: 1.05rem; font-weight: 700; }
+    .wx .temps .range .lo { color: var(--cp-link); }
+    .wx .temps .range .hi { color: var(--cp-danger); }
+    .wx .temps .desc { font-size: 0.78rem; color: var(--cp-text-muted); }
+    .wx .metrics { margin-left: auto; display: grid; grid-template-columns: auto; gap: 2px; text-align: right; }
+    .wx .metrics span { font-size: 0.76rem; color: var(--cp-text-muted); white-space: nowrap; }
+    .wx .metrics span b { color: var(--cp-text); font-weight: 600; }
+    .wx.loading { color: var(--cp-text-soft); font-size: 0.85rem; }
+    .wx.error { color: var(--cp-danger); font-size: 0.82rem; }
+
+    .empty-day {
+      padding: 18px; border: 1px dashed var(--cp-border); border-radius: 14px;
+      color: var(--cp-text-muted); font-size: 0.9rem; text-align: center;
+    }
+
+    /* Interactive Leaflet map */
+    #leaflet { width: 100%; height: clamp(460px, 74vh, 920px); border-radius: 0; z-index: 0; background: var(--cp-surface-soft); }
+    .map-head .status { margin: 0; }
+    .legend .rng { color: var(--cp-text); font-weight: 600; }
+    .leaflet-container { font-family: inherit; }
+    .pin {
+      width: 28px; height: 28px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
+      background: var(--c, var(--cp-accent)); border: 2px solid #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center;
+    }
+    .pin span { transform: rotate(45deg); font-size: 13px; line-height: 1; }
+    .leaflet-popup-content { margin: 10px 12px; font-size: 0.85rem; min-width: 190px; }
+    .pop-name { font-weight: 700; font-size: 0.95rem; margin-bottom: 2px; }
+    .pop-day { font-size: 0.72rem; color: #666; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .03em; }
+    .pop-wx { display: flex; align-items: center; gap: 8px; }
+    .pop-wx .pi { font-size: 1.5rem; }
+    .pop-wx .pt { font-weight: 700; }
+    .pop-wx .pt .lo { color: #0078d4; } .pop-wx .pt .hi { color: #dc2626; }
+    .pop-sub { font-size: 0.76rem; color: #555; margin-top: 4px; }
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--cp-border); font-size: 0.8rem; color: var(--cp-text-muted); }
+    .legend .lg { display: inline-flex; align-items: center; gap: 6px; }
+    .legend .sw { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1px var(--cp-border); }
+
+    footer.note {
+      margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--cp-border);
+      font-size: 0.8rem; color: var(--cp-text-soft);
+    }
+    footer.note a { color: var(--cp-link); text-decoration: none; }
+    footer.note a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <div>
+        <h1>🚗❄️ Nordkapp Roadtrip · Live Weather Map</h1>
+        <div class="sub">Every stop on the drive to the top of Europe — click a marker for that day's forecast.</div>
+      </div>
+      <div class="toolbar">
+        <button class="btn" id="themeBtn" title="Toggle light/dark">🌗 Theme</button>
+        <button class="btn primary" id="refreshBtn">↻ Refresh</button>
+      </div>
+    </header>
+
+    <div class="card map-card">
+      <div class="map-head">
+        <h2>🌦️ Weather map</h2>
+        <span class="status" id="status"><span class="dot" id="statusDot"></span><span id="statusText">Loading forecast…</span></span>
+      </div>
+      <div id="leaflet"></div>
+      <div class="legend" id="legend"></div>
+    </div>
+
+    <footer class="note">
+      Stops from the Nordkapp Google My Map · weather by
+      <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (free, no key).
+      Temperatures °C, wind km/h. Each marker shows the forecast for that day's date; trip dates beyond the
+      ~16-day live window fall back to last year's same-date readings as a seasonal estimate.
+      Map tiles © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>.
+    </footer>
+  </div>
+
+  <script>
+    // ============================================================
+    //  Config — dates are computed dynamically from the start date
+    // ============================================================
+    const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
+    const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
+
+    // ---- Trip stops (destinations from the Nordkapp Google My Map, in travel order).
+    //      day / date / title are filled in automatically from TRIP_START at boot. ----
+    const TRIP = [
+      {
+        label: "Day 1", meta: "6.5 hrs · 500 km",
+        stops: [
+          { name: "Dibakar's Home",                       lat: 59.7653572, lon: 10.0880074, type: "home" },
+          { name: "Tesla Supercharger – Eidsvoll",        lat: 60.312346,  lon: 11.145198,  type: "charger" },
+          { name: "Tesla Supercharger – Fåvang",          lat: 61.4540214, lon: 10.1890639, type: "charger" },
+          { name: "Sohlbergplassen",                      lat: 61.8803679, lon: 10.1854497, type: "sight" },
+          { name: "Stoppeplass",                          lat: 62.2331613, lon: 9.5312438,  type: "sight" },
+          { name: "Kongsvoll Botaniske Fjellhage",        lat: 62.3023765, lon: 9.6040772,  type: "sight" },
+          { name: "Tesla Supercharger – Near Gullvåg",    lat: 62.831994,  lon: 10.0098305, type: "charger" },
+          { name: "Gullvåg Camping",                      lat: 62.9180226, lon: 10.1426398, type: "stay" }
+        ]
+      },
+      {
+        label: "Day 2", meta: "7.5 hrs · 524 km",
+        stops: [
+          { name: "Nidaros Cathedral Parking",            lat: 63.428379,  lon: 10.396289,  type: "sight" },
+          { name: "Tesla Supercharger – Steinkjer",       lat: 64.0128435, lon: 11.4908463, type: "charger" },
+          { name: "Tesla Supercharger – Brekkvasselv",    lat: 64.8476678, lon: 13.0159986, type: "charger" },
+          { name: "Tesla Supercharger – Mosjøen",         lat: 65.834832,  lon: 13.191592,  type: "charger" },
+          { name: "Yttervik",                             lat: 66.2329104, lon: 13.8885344, type: "stay" }
+        ]
+      },
+      {
+        label: "Day 3", meta: "6 hrs · 400 km",
+        stops: [
+          { name: "Havmannen",                            lat: 66.3101601, lon: 14.1274651, type: "sight" },
+          { name: "The Arctic Circle Center",             lat: 66.5524207, lon: 15.3224647, type: "sight" },
+          { name: "Tesla Supercharger – Storjord",        lat: 66.81405,   lon: 15.401794,  type: "charger" },
+          { name: "Tesla Supercharger – Fauske",          lat: 67.258826,  lon: 15.400951,  type: "charger" },
+          { name: "Tesla Supercharger – Innhavet",        lat: 67.9623,    lon: 15.9295407, type: "charger" },
+          { name: "Ballangen Camping",                    lat: 68.3389029, lon: 16.8577466, type: "stay" }
+        ]
+      },
+      {
+        label: "Day 4", meta: "Stops to be added",
+        stops: []
+      }
+    ];
+
+    const TYPE_ICON = { home: "🏠", charger: "⚡", sight: "📷", stay: "🛏️" };
+    const TYPE_LABEL = { home: "Start", charger: "Charge", sight: "Sightseeing", stay: "Overnight" };
+
+    // WMO weather code → { icon, text }
+    const WMO = {
+      0:  ["☀️", "Clear sky"],
+      1:  ["🌤️", "Mainly clear"],
+      2:  ["⛅", "Partly cloudy"],
+      3:  ["☁️", "Overcast"],
+      45: ["🌫️", "Fog"],
+      48: ["🌫️", "Rime fog"],
+      51: ["🌦️", "Light drizzle"],
+      53: ["🌦️", "Drizzle"],
+      55: ["🌧️", "Dense drizzle"],
+      56: ["🌧️", "Freezing drizzle"],
+      57: ["🌧️", "Freezing drizzle"],
+      61: ["🌦️", "Light rain"],
+      63: ["🌧️", "Rain"],
+      65: ["🌧️", "Heavy rain"],
+      66: ["🌧️", "Freezing rain"],
+      67: ["🌧️", "Freezing rain"],
+      71: ["🌨️", "Light snow"],
+      73: ["🌨️", "Snow"],
+      75: ["❄️", "Heavy snow"],
+      77: ["🌨️", "Snow grains"],
+      80: ["🌦️", "Rain showers"],
+      81: ["🌧️", "Rain showers"],
+      82: ["⛈️", "Violent showers"],
+      85: ["🌨️", "Snow showers"],
+      86: ["❄️", "Heavy snow showers"],
+      95: ["⛈️", "Thunderstorm"],
+      96: ["⛈️", "Thunderstorm + hail"],
+      99: ["⛈️", "Thunderstorm + hail"]
+    };
+    const wmo = (c) => WMO[c] || ["🌡️", "—"];
+
+    // ============================================================
+    //  Dynamic dates — Day 1 = TRIP_START, each later day +1 calendar day
+    // ============================================================
+    const pad = (n) => String(n).padStart(2, "0");
+    function addDays(iso, n) {
+      const d = new Date(iso + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() + n);
+      return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+    }
+    function prettyDate(iso) {
+      const d = new Date(iso + "T00:00:00Z");
+      return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+    }
+    function shortDate(iso) {
+      const d = new Date(iso + "T00:00:00Z");
+      return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+    }
+    // Fill in day / date / title for every day, computed from TRIP_START
+    function normalizeDates() {
+      TRIP.forEach((d, i) => {
+        d.day = i + 1;
+        d.date = addDays(TRIP_START, i);
+        d.title = prettyDate(d.date);
+      });
+    }
+
+    // ============================================================
+    //  Interactive Leaflet map
+    // ============================================================
+    let map = null, layer = null;
+    function initMap() {
+      if (map) return;
+      map = L.map("leaflet", { scrollWheelZoom: true, zoomControl: true }).setView([66, 14], 5);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(map);
+      layer = L.layerGroup().addTo(map);
+    }
+    function pinIcon(color, emoji) {
+      return L.divIcon({
+        className: "",
+        html: `<div class="pin" style="--c:${color}"><span>${emoji}</span></div>`,
+        iconSize: [28, 40], iconAnchor: [14, 40], popupAnchor: [0, -36]
+      });
+    }
+    function popupHtml(stop, day, color) {
+      const w = stop._wx;
+      const wx = !w
+        ? `<div class="pop-sub">Loading weather…</div>`
+        : `<div class="pop-wx">
+             <span class="pi">${w.icon}</span>
+             <span class="pt"><span class="hi">${fmt(w.tmax)}°</span> / <span class="lo">${fmt(w.tmin)}°</span>C — ${w.text}</span>
+           </div>
+           <div class="pop-sub">💨 ${fmt(w.wind)} km/h${w.gust != null ? ` (gust ${fmt(w.gust)})` : ""} · 🌧️ ${w.psum != null ? fmt(w.psum) : "—"} mm${w.pprob != null ? ` · ${fmt(w.pprob)}%` : ""}</div>`;
+      return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${stop.name}</div>
+              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${wx}
+              <div class="pop-sub"><a href="https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}" target="_blank" rel="noopener">${stop.lat.toFixed(4)}, ${stop.lon.toFixed(4)} ↗</a></div>`;
+    }
+    function renderMap() {
+      if (!map) return;
+      layer.clearLayers();
+      const bounds = [];
+      TRIP.forEach((d, di) => {
+        const color = DAY_COLORS[di % DAY_COLORS.length];
+        const line = [];
+        d.stops.forEach((s) => {
+          const m = L.marker([s.lat, s.lon], { icon: pinIcon(color, TYPE_ICON[s.type] || "📍") })
+            .bindPopup(popupHtml(s, d, color));
+          m.addTo(layer);
+          s._marker = m;
+          line.push([s.lat, s.lon]);
+          bounds.push([s.lat, s.lon]);
+        });
+        if (line.length > 1) L.polyline(line, { color, weight: 3, opacity: 0.55 }).addTo(layer);
+      });
+      if (bounds.length) map.fitBounds(bounds, { padding: [40, 40] });
+
+      // Legend — one entry per day with its dynamic date and (once loaded) temp range
+      document.getElementById("legend").innerHTML = TRIP
+        .filter((d) => d.stops.length)
+        .map((d) => `<span class="lg"><span class="sw" style="background:${DAY_COLORS[(d.day - 1) % DAY_COLORS.length]}"></span><b>${d.label}</b> · ${shortDate(d.date)} <span class="rng" id="rng-${d.day}">…</span></span>`)
+        .join("");
+    }
+
+    // ---- Weather fetch (Open-Meteo) ----
+    const allStops = () => TRIP.flatMap((d) => d.stops.map((s) => ({ ...s, _day: d.day, _date: d.date })));
+
+    function buildUrl(base, lats, lons, start, end) {
+      const params = new URLSearchParams({
+        latitude: lats.join(","),
+        longitude: lons.join(","),
+        daily: "weather_code,temperature_2m_max,temperature_2m_min,wind_speed_10m_max,wind_gusts_10m_max,precipitation_sum,precipitation_probability_max",
+        timezone: "Europe/Oslo",
+        wind_speed_unit: "kmh",
+        start_date: start,
+        end_date: end
+      });
+      return `${base}?${params.toString()}`;
+    }
+
+    async function fetchWeather() {
+      const stops = allStops();
+      if (!stops.length) { setStatus("ok", "No stops to forecast yet."); return; }
+
+      const lats = stops.map((s) => s.lat);
+      const lons = stops.map((s) => s.lon);
+      const dates = stops.map((s) => s._date).sort();
+      const start = dates[0], end = dates[dates.length - 1];
+
+      setStatus("warn", "Fetching live forecast…");
+
+      // Decide source: live forecast if within ~16 days, otherwise last-year archive.
+      const today = new Date();
+      const daysToStart = Math.round((new Date(start) - today) / 86400000);
+      const inForecastWindow = daysToStart <= 16 && daysToStart >= -3;
+
+      let data, mode;
+      try {
+        if (inForecastWindow) {
+          data = await getJson(buildUrl("https://api.open-meteo.com/v1/forecast", lats, lons, start, end));
+          mode = "forecast";
+        } else {
+          throw new Error("outside forecast window");
+        }
+      } catch (e) {
+        // Fallback: same dates one year earlier from the historical archive
+        try {
+          const ly = (iso) => (parseInt(iso.slice(0, 4)) - 1) + iso.slice(4);
+          data = await getJson(buildUrl("https://archive-api.open-meteo.com/v1/archive", lats, lons, ly(start), ly(end)));
+          mode = "archive";
+        } catch (e2) {
+          setStatus("err", "Could not load weather. Check your internet connection and press “Refresh weather”.");
+          markAllError();
+          return;
+        }
+      }
+
+      const series = Array.isArray(data) ? data : [data];
+      paint(series, mode);
+
+      const when = new Date().toLocaleString();
+      if (mode === "forecast") setStatus("ok", `Live forecast loaded · updated ${when}`);
+      else setStatus("warn", `Trip date is beyond the live forecast range — showing last year's same-date readings as a seasonal estimate · updated ${when}`);
+    }
+
+    function paint(series, mode) {
+      // series is aligned 1:1 with the flattened stop request order
+      let cursor = 0;
+      TRIP.forEach((d) => {
+        let lo = Infinity, hi = -Infinity;
+        // In archive (fallback) mode the dates come from one year earlier.
+        const targetDate = mode === "archive"
+          ? (parseInt(d.date.slice(0, 4)) - 1) + d.date.slice(4)
+          : d.date;
+        const color = DAY_COLORS[(d.day - 1) % DAY_COLORS.length];
+        d.stops.forEach((s) => {
+          const loc = series[cursor++];
+          if (!loc || !loc.daily || !loc.daily.time) return;
+          const di = loc.daily.time.indexOf(targetDate);
+          const idx = di >= 0 ? di : 0;
+          const dd = loc.daily;
+          const tmax = dd.temperature_2m_max[idx];
+          const tmin = dd.temperature_2m_min[idx];
+          const wind = dd.wind_speed_10m_max[idx];
+          const gust = dd.wind_gusts_10m_max ? dd.wind_gusts_10m_max[idx] : null;
+          const psum = dd.precipitation_sum ? dd.precipitation_sum[idx] : null;
+          const pprob = dd.precipitation_probability_max ? dd.precipitation_probability_max[idx] : null;
+          const [icon, text] = wmo(dd.weather_code[idx]);
+
+          if (tmin != null) lo = Math.min(lo, tmin);
+          if (tmax != null) hi = Math.max(hi, tmax);
+
+          // Stash weather on the stop and refresh its map popup
+          s._wx = { tmax, tmin, wind, gust, psum, pprob, icon, text };
+          if (s._marker) s._marker.setPopupContent(popupHtml(s, d, color));
+        });
+
+        const rng = document.getElementById(`rng-${d.day}`);
+        if (rng && isFinite(lo)) rng.textContent = `${fmt(lo)}…${fmt(hi)}°C`;
+      });
+    }
+
+    function markAllError() {
+      TRIP.forEach((d) => {
+        const rng = document.getElementById(`rng-${d.day}`);
+        if (rng) rng.textContent = "(no data)";
+      });
+    }
+
+    async function getJson(url) {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      if (j && j.error) throw new Error(j.reason || "API error");
+      return j;
+    }
+
+    const fmt = (n) => (n == null || isNaN(n)) ? "—" : Math.round(n);
+
+    function setStatus(kind, text) {
+      document.getElementById("statusDot").className = "dot " + kind;
+      document.getElementById("statusText").textContent = text;
+    }
+
+    // ---- Controls ----
+    document.getElementById("themeBtn").addEventListener("click", () => {
+      const cur = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
+    });
+    document.getElementById("refreshBtn").addEventListener("click", fetchWeather);
+
+    // ---- Boot: instant map render from baked-in stops, then live weather ----
+    function boot() {
+      normalizeDates();
+      initMap();
+      renderMap();          // map + markers appear immediately (no network wait)
+      fetchWeather();       // weather fills the popups + legend when it arrives
+    }
+
+    boot();
+  </script>
+</body>
+</html>
