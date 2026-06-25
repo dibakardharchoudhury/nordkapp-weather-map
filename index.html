@@ -235,15 +235,20 @@
     .det-temps .desc { font-size: 0.86rem; color: var(--cp-text-muted); }
     .det-metrics { display: flex; gap: 20px; flex-wrap: wrap; font-size: 0.88rem; color: var(--cp-text-muted); }
     .det-metrics b { color: var(--cp-text); font-weight: 600; }
-    .det-near { margin-top: 16px; }
-    .near-title { font-size: 0.82rem; font-weight: 700; color: var(--cp-text); margin-bottom: 4px; }
-    .near-empty { font-size: 0.82rem; color: var(--cp-text-muted); font-style: italic; }
-    .near-item { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 12px; padding: 5px 0; border-top: 1px solid var(--cp-border); }
-    .near-name { color: var(--cp-text); font-weight: 600; font-size: 0.86rem; }
-    .near-meta { display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline; font-size: 0.78rem; color: var(--cp-text-muted); }
-    .near-hours { color: var(--cp-text-muted); }
-    .near-hours.dim { opacity: 0.55; }
-    .near-dist { color: var(--cp-text); font-weight: 600; }
+    .det-near { margin-top: 22px; }
+    .near-title { font-size: 0.82rem; font-weight: 700; color: var(--cp-text); margin-bottom: 10px; letter-spacing: .01em; display: flex; align-items: center; gap: 7px; }
+    .near-empty { font-size: 0.85rem; color: var(--cp-text-muted); font-style: italic; padding: 2px 0; }
+    .near-list { display: flex; flex-direction: column; gap: 8px; }
+    .near-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--cp-surface-soft); border: 1px solid var(--cp-border); transition: border-color .15s ease, transform .15s ease; }
+    .near-item:hover { border-color: var(--cp-border-strong); }
+    .near-ic { flex: 0 0 auto; width: 1.85rem; text-align: center; font-size: 1.25rem; line-height: 1; }
+    .near-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+    .near-name { color: var(--cp-text); font-weight: 600; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .near-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .near-hours { font-size: 0.76rem; color: var(--cp-text-muted); }
+    .near-hours.dim { opacity: 0.6; font-style: italic; }
+    .near-chip { font-size: 0.66rem; font-weight: 700; color: var(--cp-accent); background: var(--cp-accent-soft); padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+    .near-dist { flex: 0 0 auto; font-size: 0.74rem; font-weight: 700; color: var(--cp-text); background: var(--cp-bg-elevated); border: 1px solid var(--cp-border); padding: 4px 9px; border-radius: 999px; white-space: nowrap; }
 
     footer.note {
       margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--cp-border);
@@ -251,6 +256,37 @@
     }
     footer.note a { color: var(--cp-link); text-decoration: none; }
     footer.note a:hover { text-decoration: underline; }
+
+    /* Mobile / small-screen layout */
+    @media (max-width: 640px) {
+      .wrap { padding: 16px 13px 48px; }
+      header.hero { gap: 12px; margin-bottom: 18px; }
+      .hero h1 { font-size: 1.35rem; }
+      .hero .sub { font-size: 0.88rem; }
+      .toolbar { width: 100%; }
+      button.btn { flex: 1 1 auto; text-align: center; padding: 9px 12px; }
+      .map-card .map-head { padding: 10px 13px; }
+      #leaflet { height: clamp(320px, 56vh, 540px); }
+      .map-frame { min-height: 280px; }
+      .stops { grid-template-columns: 1fr; gap: 12px; }
+      .day-head h2 { font-size: 1.05rem; }
+      .details { padding: 14px 13px; }
+      .det-head { gap: 10px; }
+      .det-icon { font-size: 1.6rem; }
+      .det-name { font-size: 1rem; }
+      .det-badge { font-size: 0.62rem; padding: 2px 8px; }
+      .det-wx { gap: 12px; margin-top: 12px; }
+      .det-wx .big { font-size: 2.1rem; }
+      .det-temps .range { font-size: 1.25rem; }
+      .det-metrics { gap: 12px; font-size: 0.82rem; }
+      .legend { gap: 10px; padding: 10px 13px; font-size: 0.74rem; }
+      .leaflet-popup-content { min-width: 160px; font-size: 0.82rem; }
+    }
+    @media (max-width: 380px) {
+      .near-item { padding: 9px 10px; gap: 9px; }
+      .near-ic { width: 1.5rem; font-size: 1.1rem; }
+      .near-dist { padding: 3px 7px; }
+    }
   </style>
 </head>
 <body>
@@ -484,6 +520,7 @@
            </div>`;
       const foodHtml = nearList("🍔 Food & restaurants nearby", g ? g.food : [], done, "None mapped within 15 km");
       const shopsHtml = nearList("🛒 Grocery stores nearby", g ? g.shops : [], done, "None mapped within 15 km");
+      const fuelHtml = nearList("⛽ Gas stations (☕ = coffee stop)", g ? g.fuel : [], done, "None mapped within 15 km");
       return `<div class="det-head">
                 <span class="det-icon">${TYPE_ICON[stop.type] || "📍"}</span>
                 <div>
@@ -493,7 +530,7 @@
                   <div class="det-coords"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>
                 </div>
                 <span class="det-badge">${TYPE_LABEL[stop.type] || "Stop"}</span>
-              </div>${descBlock}${wx}${foodHtml}${shopsHtml}`;
+              </div>${descBlock}${wx}${foodHtml}${shopsHtml}${fuelHtml}`;
     }
     function showDetails(stop, day, color) {
       selected = { stop, day, color };
@@ -539,12 +576,19 @@
       if (!items || !items.length) {
         return `<div class="det-near"><div class="near-title">${title}</div><div class="near-empty">${emptyMsg}</div></div>`;
       }
-      const rows = items.map((x) =>
-        `<div class="near-item"><span class="near-name">${x.icon} ${x.name}</span>` +
-        `<span class="near-meta">${x.hours ? `<span class="near-hours">⏰ ${hoursLabel(x.hours)}</span>` : `<span class="near-hours dim">hours n/a</span>`}` +
-        `<span class="near-dist">${distLabel(x.dist)}</span></span></div>`
-      ).join("");
-      return `<div class="det-near"><div class="near-title">${title}</div>${rows}</div>`;
+      const rows = items.map((x) => {
+        const hours = x.hours
+          ? `<span class="near-hours">⏰ ${hoursLabel(x.hours)}</span>`
+          : `<span class="near-hours dim">hours n/a</span>`;
+        const coffee = x.coffee ? `<span class="near-chip">☕ coffee</span>` : "";
+        return `<div class="near-item">` +
+          `<span class="near-ic">${x.icon}</span>` +
+          `<div class="near-body"><div class="near-name">${x.name}</div>` +
+          `<div class="near-sub">${hours}${coffee}</div></div>` +
+          `<span class="near-dist">${distLabel(x.dist)}</span>` +
+          `</div>`;
+      }).join("");
+      return `<div class="det-near"><div class="near-title">${title}</div><div class="near-list">${rows}</div></div>`;
     }
 
     const OSM_LABELS = {
@@ -578,6 +622,13 @@
       if (t.amenity === "fast_food") return "🍔";
       return "🍽️";
     }
+    // Most Norwegian highway fuel stations also serve coffee — flag the ones
+    // OSM marks with a shop/café, or whose brand is a known coffee-serving chain.
+    function fuelHasCoffee(t) {
+      if (t.cafe === "yes" || t.coffee === "yes" || t.shop) return true;
+      const s = ((t.brand || "") + " " + (t.operator || "") + " " + (t.name || "")).toLowerCase();
+      return /circle ?k|statoil|esso|shell|\byx\b|uno-?x|\bbest\b|\bst1\b|\bq8\b|7-?eleven|deli ?de ?luca/.test(s);
+    }
     function formatLocality(d) {
       if (!d) return null;
       const a = d.address || {};
@@ -602,6 +653,7 @@
         `nwr(around:700,${lat},${lon})[natural][name];` +
         `nwr(around:15000,${lat},${lon})[amenity~"^(fast_food|restaurant|cafe)$"][name];` +
         `nwr(around:15000,${lat},${lon})[shop~"^(supermarket|convenience|greengrocer|general)$"][name];` +
+        `nwr(around:15000,${lat},${lon})[amenity=fuel][name];` +
         `);out tags center;`;
     }
     async function overpass(lat, lon) {
@@ -640,7 +692,7 @@
       const SHOP = ["supermarket", "convenience", "greengrocer", "general"];
       const PRIO = { tourism: 0, leisure: 1, historic: 2, natural: 3 };
       let bestPoi = null, bestScore = 1e9;
-      const food = [], shops = [];
+      const food = [], shops = [], fuel = [];
       for (const e of els) {
         const t = e.tags || {};
         if (!t.name) continue;
@@ -655,17 +707,20 @@
         }
         if (FOOD.includes(t.amenity)) food.push({ name: t.name, icon: foodIcon(t), hours: t.opening_hours || "", dist: d });
         if (SHOP.includes(t.shop)) shops.push({ name: t.name, icon: "🛒", hours: t.opening_hours || "", dist: d });
+        if (t.amenity === "fuel") fuel.push({ name: t.name, icon: "⛽", hours: t.opening_hours || "", dist: d, coffee: fuelHasCoffee(t) });
       }
       food.sort((a, b) => a.dist - b.dist);
       shops.sort((a, b) => a.dist - b.dist);
+      fuel.sort((a, b) => a.dist - b.dist);
       g.place = bestPoi;
       g.food = dedupe(food).slice(0, 6);
       g.shops = dedupe(shops).slice(0, 6);
+      g.fuel = dedupe(fuel).slice(0, 6);
     }
     async function loadPlace(stop) {
       if (stop._gState) return; // already loading or done
       stop._gState = "loading";
-      const g = stop._g = { place: null, locality: null, food: [], shops: [] };
+      const g = stop._g = { place: null, locality: null, food: [], shops: [], fuel: [] };
       const jobs = [];
       jobs.push((async () => {
         try {
