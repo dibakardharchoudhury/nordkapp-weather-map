@@ -218,6 +218,8 @@
     .det-icon { font-size: 1.9rem; line-height: 1; }
     .det-name { font-weight: 700; font-size: 1.1rem; }
     .det-sub { font-size: 0.78rem; color: var(--cp-text-muted); text-transform: uppercase; letter-spacing: .03em; margin-top: 2px; font-weight: 600; }
+    .det-day-meta { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; padding: 3px 10px; border-radius: 999px;
+      background: var(--cp-accent-soft); color: var(--cp-accent); font-size: 0.8rem; font-weight: 700; }
     .det-loc { font-size: 0.9rem; color: var(--cp-text); margin-top: 5px; font-weight: 600; }
     .det-coords { margin-top: 3px; }
     .det-desc { font-size: 0.92rem; color: var(--cp-text); margin-top: 12px; line-height: 1.55; }
@@ -328,6 +330,23 @@
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
 
+    // ---- Live data source: the Nordkapp "Google My Maps" map ----
+    //  The app reads the map's KML export on every load, so any stop you add/move/
+    //  rename in Google My Maps shows up here automatically. Each day is a Folder;
+    //  the folder name carries the distance & duration (e.g. "Day 2 - … - 7.5 Hrs, 524 KMs").
+    //  Browsers block cross-origin requests to Google, so the fetch falls through a
+    //  short list of public read-only CORS proxies; if all fail we use the baked-in
+    //  stops below as an offline fallback so the page is never empty.
+    const MAP_ID = "1abBHiINlwR3S_ad8quDw17Pqgj0nBmw";
+    const KML_URL = `https://www.google.com/maps/d/kml?mid=${MAP_ID}&forcekml=1`;
+    const KML_PROXIES = [
+      (u) => u,                                                              // direct (works if CORS ever allowed)
+      (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+      (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+      (u) => `https://thingproxy.freeboard.io/fetch/${u}`
+    ];
+    const KML_TIMEOUT_MS = 12000;
+
     // Live place details come from OpenStreetMap — no API key required.
     //   • Nominatim  → the locality / address line for each stop
     //   • Overpass   → the actual mapped feature AT the stop + nearby food & grocery stores
@@ -339,8 +358,9 @@
     ];
     const OVERPASS_TIMEOUT_MS = 18000; // per-endpoint cap; a slow/throttled mirror falls through to the next
 
-    // ---- Trip stops (destinations from the Nordkapp Google My Map, in travel order).
-    //      day / date / title are filled in automatically from TRIP_START at boot. ----
+    // ---- Offline fallback stops (used only if the live Google My Maps KML can't be
+    //      reached). Mirrors the Google map in travel order. day / date / title are
+    //      filled in automatically from TRIP_START at boot; live data overrides this. ----
     const TRIP = [
       {
         label: "Day 1", meta: "6.5 hrs · 500 km",
@@ -445,6 +465,89 @@
     }
 
     // ============================================================
+    //  Live trip data from Google My Maps (KML export)
+    //  Each Folder = one day; the folder name carries the distance & duration.
+    //  Each Placemark with a <Point> = one stop (KML coords are lon,lat,alt).
+    // ============================================================
+    async function fetchKml() {
+      let lastErr;
+      for (const wrap of KML_PROXIES) {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), KML_TIMEOUT_MS);
+        try {
+          const r = await fetch(wrap(KML_URL), { signal: ctl.signal });
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          const t = await r.text();
+          if (!/<kml|<Document/i.test(t)) throw new Error("Not KML");
+          return t;
+        } catch (e) {
+          lastErr = e; // CORS / throttled / proxy down — try the next proxy
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      throw lastErr || new Error("Google My Maps KML unavailable");
+    }
+    // "Day 2 - 5th July - 7.5 Hrs, 524 KMs" → { label:"Day 2", meta:"7.5 hrs · 524 km" }
+    function parseDayMeta(rawName) {
+      const name = rawName || "";
+      const m = name.match(/day\s*\d+/i);
+      const label = m ? m[0].replace(/day/i, "Day").replace(/\s+/, " ") : (name.trim() || "Day");
+      const hm = name.match(/([\d.]+)\s*h(?:rs?|ours?)?\b/i);
+      const km = name.match(/([\d.,]+)\s*k\s*ms?\b/i);
+      const parts = [];
+      if (hm) parts.push(hm[1].replace(/\.0$/, "") + " hrs");
+      if (km) parts.push(km[1].replace(/[, ]/g, "") + " km");
+      return { label, meta: parts.join(" · ") };
+    }
+    function inferType(name, idx, dayIdx, count) {
+      const n = (name || "").toLowerCase();
+      if (/supercharger|charging|charge\b|ev charg/.test(n)) return "charger";
+      if (dayIdx === 0 && idx === 0) return "home";
+      if (/\bhome\b/.test(n)) return "home";
+      if (/camping|camp\b|hotel|motel|cabin|hytte|lodge|guest ?house|hostel|overnight/.test(n)) return "stay";
+      if (idx === count - 1) return "stay"; // last stop of a day = overnight
+      return "sight";
+    }
+    function folderName(folder) {
+      for (const ch of folder.children) if (ch.tagName === "name") return (ch.textContent || "").trim();
+      return "Day";
+    }
+    function parseKmlToTrip(text) {
+      const doc = new DOMParser().parseFromString(text, "application/xml");
+      if (doc.getElementsByTagName("parsererror").length) throw new Error("KML parse error");
+      const folders = [...doc.getElementsByTagName("Folder")];
+      const groups = folders.length ? folders : [doc.getElementsByTagName("Document")[0]].filter(Boolean);
+      const days = [];
+      groups.forEach((group) => {
+        const { label, meta } = parseDayMeta(folderName(group));
+        const stops = [];
+        for (const pm of group.getElementsByTagName("Placemark")) {
+          const pt = pm.getElementsByTagName("Point")[0];
+          if (!pt) continue; // skip routes / shapes
+          const coordEl = pt.getElementsByTagName("coordinates")[0];
+          if (!coordEl) continue;
+          const first = (coordEl.textContent || "").trim().split(/\s+/)[0];
+          const [lon, lat] = first.split(",").map(Number);
+          if (!isFinite(lat) || !isFinite(lon)) continue;
+          const nameEl = pm.getElementsByTagName("name")[0];
+          const nm = (nameEl ? nameEl.textContent : "Stop").trim() || "Stop";
+          stops.push({ name: nm, lat, lon });
+        }
+        if (stops.length) days.push({ label, meta, stops });
+      });
+      if (!days.length) throw new Error("No stops found in KML");
+      days.forEach((d, di) => d.stops.forEach((s, si) => { s.type = inferType(s.name, si, di, d.stops.length); }));
+      return days;
+    }
+    async function loadLiveTrip() {
+      const days = parseKmlToTrip(await fetchKml());
+      TRIP.length = 0;
+      days.forEach((d) => TRIP.push(d));
+      return TRIP;
+    }
+
+    // ============================================================
     //  Interactive Leaflet map
     // ============================================================
     let map = null, layer = null;
@@ -483,8 +586,9 @@
            </div>
            <div class="pop-sub">💨 ${fmt(w.wind)} km/h${w.gust != null ? ` (gust ${fmt(w.gust)})` : ""} · 🌧️ ${w.psum != null ? fmt(w.psum) : "—"} mm${w.pprob != null ? ` · ${fmt(w.pprob)}%` : ""}</div>`;
       const shopHtml = nearShop ? `<div class="pop-sub">🛒 Nearest shop: ${nearShop.name} (${distLabel(nearShop.dist)})</div>` : "";
+      const dayMeta = day.meta ? `<div class="pop-sub">🚗 ${day.meta}</div>` : "";
       return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${stop.name}</div>
-              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${locHtml}${descHtml}${wx}${shopHtml}
+              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${dayMeta}${locHtml}${descHtml}${wx}${shopHtml}
               <div class="pop-sub"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>`;
     }
 
@@ -526,6 +630,7 @@
                 <div>
                   <div class="det-name">${stop.name}</div>
                   <div class="det-sub" style="color:${color}">${day.label} · ${day.title}</div>
+                  ${day.meta ? `<div class="det-day-meta">🚗 ${day.meta}</div>` : ""}
                   ${locLine}
                   <div class="det-coords"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>
                 </div>
@@ -894,13 +999,32 @@
       const cur = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
       document.documentElement.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
     });
-    document.getElementById("refreshBtn").addEventListener("click", fetchWeather);
+    document.getElementById("refreshBtn").addEventListener("click", refreshAll);
 
-    // ---- Boot: instant map render from baked-in stops, then live weather ----
-    function boot() {
+    // Reload the live trip from Google My Maps, then refresh the weather.
+    async function refreshAll() {
+      setStatus("warn", "Refreshing trip from Google My Maps…");
+      try {
+        await loadLiveTrip();
+        normalizeDates();
+        renderMap();
+      } catch (e) { /* keep current stops */ }
+      fetchWeather();
+    }
+
+    // ---- Boot: instant map from saved stops, then live Google My Maps + weather ----
+    async function boot() {
       normalizeDates();
       initMap();
-      renderMap();          // map + markers appear immediately (no network wait)
+      renderMap();          // saved stops appear immediately (no network wait)
+      setStatus("warn", "Loading live trip from Google My Maps…");
+      try {
+        await loadLiveTrip();
+        normalizeDates();
+        renderMap();         // re-render with the live stops (incl. any you just added)
+      } catch (e) {
+        setStatus("warn", "Showing saved trip — couldn't reach Google My Maps live.");
+      }
       fetchWeather();       // weather fills the popups + legend when it arrives
     }
 
