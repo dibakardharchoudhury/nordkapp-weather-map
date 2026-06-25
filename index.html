@@ -371,20 +371,6 @@
     ];
     const OVERPASS_TIMEOUT_MS = 7000; // per-endpoint cap — drop a slow/dead mirror fast and try the next
 
-    // OPTIONAL — a far more reliable primary source for the nearby food / grocery /
-    // fuel data. Anonymous Overpass is shared and rate-limited (the 429s); a free
-    // Geoapify key (https://myprojects.geoapify.com, 3,000 req/day) is OSM-derived
-    // so the UI stays identical, and the key can be locked to your site's domain.
-    // Paste your key below to switch the primary source; leave "" to stay keyless
-    // on Overpass. Overpass is always kept as an automatic fallback either way.
-    const GEOAPIFY_KEY = "";
-    const GEOAPIFY_CATS = [
-      "catering.restaurant", "catering.fast_food", "catering.cafe",
-      "commercial.supermarket", "commercial.convenience", "commercial.marketplace", "commercial.food_and_drink",
-      "service.vehicle.fuel",
-      "tourism.sights", "tourism.attraction", "leisure.park", "natural", "heritage"
-    ].join(",");
-
     // ---- Nearby-place performance layer -------------------------------------
     //  The public OpenStreetMap services (Overpass + Nominatim) are shared and
     //  heavily rate-limited, so firing a fresh query on every click triggers
@@ -939,49 +925,47 @@
     }
     const _opCooldown = {}; // endpoint -> timestamp until which to skip it
     let _opTick = 0;        // spread concurrent calls across mirrors
-    async function overpass(lat, lon) {
-      const body = "data=" + encodeURIComponent(overpassQuery(lat, lon));
-      const eps = OVERPASS_ENDPOINTS, n = eps.length;
-      const start = _opTick++ % n; // each concurrent call begins on a different mirror
-      let lastErr;
-      for (let i = 0; i < n; i++) {
-        const ep = eps[(start + i) % n];
-        if (_opCooldown[ep] && Date.now() < _opCooldown[ep]) continue; // parked mirror — skip
-        const ctl = new AbortController();
-        const timer = setTimeout(() => ctl.abort(), OVERPASS_TIMEOUT_MS);
-        try {
-          const r = await fetch(ep, {
-            method: "POST", body, signal: ctl.signal,
-            headers: { "Content-Type": "application/x-www-form-urlencoded" }
-          });
-          if (r.status === 429 || r.status === 503 || r.status === 504) {
-            _opCooldown[ep] = Date.now() + OP_COOLDOWN_MS; // throttled — park it for a minute
-            throw new Error("HTTP " + r.status);
-          }
-          if (!r.ok) throw new Error("HTTP " + r.status);
-          return await r.json();
-        } catch (e) {
-          lastErr = e; // throttled / slow / CORS — try the next mirror
-        } finally {
-          clearTimeout(timer);
-        }
-      }
-      throw lastErr || new Error("Overpass busy");
-    }
-    // Geoapify Places — primary source when GEOAPIFY_KEY is set. One circle query
-    // returns food / shops / fuel (+ nearby landmarks) as OSM-derived GeoJSON.
-    async function geoapify(lat, lon) {
-      const url = `https://api.geoapify.com/v2/places?categories=${GEOAPIFY_CATS}` +
-        `&filter=circle:${lon},${lat},9000&bias=proximity:${lon},${lat}&limit=60&apiKey=${GEOAPIFY_KEY}`;
+    // Public CORS proxies fetch server-side from THEIR own IP, so a proxied request
+    // can dodge a rate limit on the visitor's IP. Used only as a keyless last-resort
+    // after the direct mirrors — no API key, ever.
+    const OVERPASS_PROXIES = [
+      (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+      (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`
+    ];
+    async function overpassFetch(url, init) {
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), OVERPASS_TIMEOUT_MS);
       try {
-        const r = await fetch(url, { signal: ctl.signal });
-        if (!r.ok) throw new Error("HTTP " + r.status);
+        const r = await fetch(url, Object.assign({ signal: ctl.signal }, init || {}));
+        if (!r.ok) { const e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
         return await r.json();
       } finally {
         clearTimeout(timer);
       }
+    }
+    async function overpass(lat, lon) {
+      const q = overpassQuery(lat, lon);
+      const body = "data=" + encodeURIComponent(q);
+      const eps = OVERPASS_ENDPOINTS, n = eps.length;
+      const start = _opTick++ % n; // each concurrent call begins on a different mirror
+      let lastErr;
+      // 1) Direct POST to the mirrors — fastest path when the IP isn't throttled.
+      for (let i = 0; i < n; i++) {
+        const ep = eps[(start + i) % n];
+        if (_opCooldown[ep] && Date.now() < _opCooldown[ep]) continue; // parked mirror — skip
+        try {
+          return await overpassFetch(ep, { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+        } catch (e) {
+          lastErr = e;
+          if (e.status === 429 || e.status === 503 || e.status === 504) _opCooldown[ep] = Date.now() + OP_COOLDOWN_MS;
+        }
+      }
+      // 2) Keyless fallback — same query through a CORS proxy (different egress IP).
+      const getUrl = eps[start] + "?data=" + encodeURIComponent(q);
+      for (const wrap of OVERPASS_PROXIES) {
+        try { return await overpassFetch(wrap(getUrl)); } catch (e) { lastErr = e; }
+      }
+      throw lastErr || new Error("Overpass busy");
     }
     function dedupe(arr) {
       const seen = new Set(), out = [];
@@ -1023,58 +1007,6 @@
       g.shops = dedupe(shops).slice(0, 3);
       g.fuel = dedupe(fuel).slice(0, 3);
     }
-    // Map Geoapify GeoJSON into the exact same shape as parseOverpass, reusing the
-    // same icon / coffee / toilet helpers against each feature's raw OSM tags.
-    function parseGeoapify(stop, g, data) {
-      const feats = (data && data.features) || [];
-      const FOOD = ["fast_food", "restaurant", "cafe"];
-      const SHOP = ["supermarket", "convenience", "greengrocer", "general"];
-      const PRIO = { tourism: 0, leisure: 1, historic: 2, natural: 3 };
-      let bestPoi = null, bestScore = 1e9;
-      const food = [], shops = [], fuel = [];
-      for (const f of feats) {
-        const p = f.properties || {};
-        const t = (p.datasource && p.datasource.raw) || {};
-        const name = p.name || t.name;
-        if (!name) continue;
-        const d = (p.distance != null) ? p.distance / 1000
-          : (p.lat != null ? distKm(stop.lat, stop.lon, p.lat, p.lon) : null);
-        if (d == null) continue;
-        const cats = p.categories || [];
-        const has = (s) => cats.some((c) => c.indexOf(s) === 0);
-        let pk = null;
-        for (const k of ["tourism", "leisure", "historic", "natural"]) { if (t[k]) { pk = k; break; } }
-        if (pk && d <= 0.7) {
-          const score = PRIO[pk] * 5 + d;
-          if (score < bestScore) { bestScore = score; bestPoi = { name, type: friendlyType(pk, t[pk]) }; }
-        }
-        const isFood = FOOD.includes(t.amenity) || has("catering");
-        const isShop = SHOP.includes(t.shop) || has("commercial.supermarket") ||
-          has("commercial.convenience") || has("commercial.marketplace") || has("commercial.food_and_drink");
-        const isFuel = t.amenity === "fuel" || has("service.vehicle.fuel");
-        if (isFood && d <= 5) food.push({ name, icon: foodIcon({ name, amenity: t.amenity, cuisine: t.cuisine }), hours: t.opening_hours || "", dist: d });
-        else if (isShop && d <= 5) shops.push({ name, icon: "🛒", hours: t.opening_hours || "", dist: d });
-        else if (isFuel && d <= 9) fuel.push({ name, icon: "⛽", hours: t.opening_hours || "", dist: d, coffee: fuelHasCoffee(t), toilet: fuelHasToilet(t) });
-      }
-      food.sort((a, b) => a.dist - b.dist);
-      shops.sort((a, b) => a.dist - b.dist);
-      fuel.sort((a, b) => a.dist - b.dist);
-      if (bestPoi) g.place = bestPoi;
-      g.food = dedupe(food).slice(0, 3);
-      g.shops = dedupe(shops).slice(0, 3);
-      g.fuel = dedupe(fuel).slice(0, 3);
-    }
-    // Fetch nearby POIs: Geoapify first when a key is set (reliable), otherwise —
-    // or if it fails / returns nothing — fall back to the keyless Overpass mirrors.
-    async function loadNearby(stop, g) {
-      if (GEOAPIFY_KEY) {
-        try {
-          parseGeoapify(stop, g, await geoapify(stop.lat, stop.lon));
-          if (g.place || (g.food && g.food.length) || (g.shops && g.shops.length) || (g.fuel && g.fuel.length)) return;
-        } catch {}
-      }
-      try { parseOverpass(stop, g, await overpass(stop.lat, stop.lon)); } catch {}
-    }
     async function loadPlace(stop, opts) {
       opts = opts || {};
       if (stop._gState === "loading") { if (opts.priority) bumpStop(stop); return; }
@@ -1111,7 +1043,7 @@
         }, stop, pri));
       }
       jobs.push(opPool.add(async () => {
-        await loadNearby(stop, g);
+        try { parseOverpass(stop, g, await overpass(stop.lat, stop.lon)); } catch {}
         refreshStop(stop);
       }, stop, pri));
 
