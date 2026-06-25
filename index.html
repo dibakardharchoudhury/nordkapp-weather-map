@@ -764,17 +764,15 @@
         iconSize: [28, 40], iconAnchor: [14, 40], popupAnchor: [0, -36]
       });
     }
-    // Build a Google Maps link that drops a pin at the stop's EXACT coordinates and
-    // labels it with the place name. We use the `q=lat,lon(Name)` form rather than a
-    // text search: a text search for a generic name like "Stoppeplass" (Norwegian for
-    // "rest stop", which exists in thousands of spots) would resolve to the wrong
-    // place, whereas this form always anchors on the precise coordinates while still
-    // showing the name as the marker label.
+    // Build a Google Maps link that searches for the stop's EXACT coordinates. Using
+    // the coordinate as the query makes Google land precisely on the point AND
+    // reverse-geocode it to the real place there, showing that place's actual name/
+    // card — instead of a text search (which mis-resolves generic names like
+    // "Stoppeplass") or a custom-labelled pin (which only shows our text, not the
+    // resolved place).
     function gmapsLink(stop) {
       const coords = `${stop.lat},${stop.lon}`;
-      const name = (stop.name || "").trim();
-      const q = name ? `${coords}(${name})` : coords;
-      return `https://www.google.com/maps?q=${encodeURIComponent(q)}`;
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(coords)}`;
     }
     function popupHtml(stop, day, color) {
       const w = stop._wx;
