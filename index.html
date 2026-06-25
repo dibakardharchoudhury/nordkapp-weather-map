@@ -1019,18 +1019,17 @@
       return null;
     }
     function overpassQuery(lat, lon) {
-      // Food reaches into the next town (the nearest McDonald's / Burger King on a
-      // road trip is often 10–15 km away), groceries stay closer, fuel widest. The
-      // distance is always shown per row, and a hard result cap keeps it small.
+      // 5 km reach for food / chargers / shops / fuel; distance is shown per row
+      // and a hard result cap keeps the response small and fast.
       return `[out:json][timeout:10];(` +
         `nwr(around:500,${lat},${lon})[tourism];` +
         `nwr(around:500,${lat},${lon})[leisure];` +
         `nwr(around:500,${lat},${lon})[historic];` +
         `nwr(around:700,${lat},${lon})[natural][name];` +
-        `nwr(around:15000,${lat},${lon})[amenity~"^(fast_food|restaurant|cafe)$"][name];` +
-        `nwr(around:15000,${lat},${lon})[amenity=charging_station][name];` +
-        `nwr(around:6000,${lat},${lon})[shop~"^(supermarket|convenience|greengrocer|general)$"][name];` +
-        `nwr(around:15000,${lat},${lon})[amenity=fuel][name];` +
+        `nwr(around:5000,${lat},${lon})[amenity~"^(fast_food|restaurant|cafe)$"][name];` +
+        `nwr(around:5000,${lat},${lon})[amenity=charging_station][name];` +
+        `nwr(around:5000,${lat},${lon})[shop~"^(supermarket|convenience|greengrocer|general)$"][name];` +
+        `nwr(around:5000,${lat},${lon})[amenity=fuel][name];` +
         `);out tags center 80;`;
     }
     const _opCooldown = {}; // endpoint -> timestamp until which to skip it
@@ -1087,7 +1086,7 @@
       "amenity:fuel", "amenity:charging_station", "tourism", "historic", "leisure"
     ].map((t) => "osm_tag=" + encodeURIComponent(t)).join("&");
     async function photon(lat, lon) {
-      const url = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lon}&radius=15&limit=80&${PHOTON_TAGS}`;
+      const url = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lon}&radius=5&limit=80&${PHOTON_TAGS}`;
       try {
         return await fetchJsonTimed(url); // direct — fast when not throttled
       } catch (e) {
@@ -1165,11 +1164,11 @@
           const score = PRIO[key] * 5 + d;
           if (score < bestScore) { bestScore = score; bestPoi = { name, type: friendlyType(key, val) }; }
         }
-        if (key === "amenity" && FOOD[val] && d <= 15) food.push({ name, icon: foodIcon({ amenity: val, name }), hours: "", dist: d });
-        else if (key === "shop" && SHOP[val] && d <= 6) shops.push({ name, icon: "🛒", hours: "", dist: d });
-        else if (key === "amenity" && val === "fuel" && d <= 15) fuel.push({ name, icon: "⛽", hours: "", dist: d, coffee: fuelHasCoffee({ name }), toilet: fuelHasToilet({ name }) });
+        if (key === "amenity" && FOOD[val] && d <= 5) food.push({ name, icon: foodIcon({ amenity: val, name }), hours: "", dist: d });
+        else if (key === "shop" && SHOP[val] && d <= 5) shops.push({ name, icon: "🛒", hours: "", dist: d });
+        else if (key === "amenity" && val === "fuel" && d <= 5) fuel.push({ name, icon: "⛽", hours: "", dist: d, coffee: fuelHasCoffee({ name }), toilet: fuelHasToilet({ name }) });
         // Recover a co-located eatery named on a charger / fuel node (OSM gap).
-        if (key === "amenity" && (val === "charging_station" || val === "fuel") && d <= 15) {
+        if (key === "amenity" && (val === "charging_station" || val === "fuel") && d <= 5) {
           const brand = brandFromName(name);
           if (brand) food.push({ name: brand, icon: foodIcon({ name: brand, amenity: "fast_food" }), hours: "", dist: d });
         }
