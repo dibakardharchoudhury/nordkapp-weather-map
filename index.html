@@ -364,10 +364,91 @@
     const OVERPASS_ENDPOINTS = [
       "https://overpass-api.de/api/interpreter",
       "https://overpass.kumi.systems/api/interpreter",
+      "https://overpass.private.coffee/api/interpreter",
       "https://overpass.osm.ch/api/interpreter",
-      "https://overpass.private.coffee/api/interpreter"
+      "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+      "https://overpass.openstreetmap.ru/api/interpreter"
     ];
-    const OVERPASS_TIMEOUT_MS = 13000; // per-endpoint cap; a slow/throttled mirror falls through to the next
+    const OVERPASS_TIMEOUT_MS = 7000; // per-endpoint cap — drop a slow/dead mirror fast and try the next
+
+    // ---- Nearby-place performance layer -------------------------------------
+    //  The public OpenStreetMap services (Overpass + Nominatim) are shared and
+    //  heavily rate-limited, so firing a fresh query on every click triggers
+    //  HTTP 429 and long stalls. Three things keep it fast AND friendly:
+    //   1) localStorage cache — results we fetch live are kept per browser for 30
+    //      days (POIs barely change), so revisits/clicks are instant, no network.
+    //   2) small concurrency pools — a few Overpass requests run in parallel across
+    //      rotating mirrors, so one slow/dead mirror can't stall everything, while
+    //      Nominatim stays gentle. This (plus mirror cooldown) is what kills 429s.
+    //   3) mirror rotation + cooldown — a 429/timeout parks that mirror for a
+    //      minute and we move straight on to the next one.
+    const POI_CACHE_PREFIX = "np_poi_v2_";
+    const POI_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — POIs are quasi-static
+    const OP_COOLDOWN_MS = 60000;                // park a throttled mirror this long
+    function poiKey(lat, lon) { return POI_CACHE_PREFIX + (+lat).toFixed(4) + "_" + (+lon).toFixed(4); }
+    function poiCacheGet(lat, lon) {
+      try {
+        const raw = localStorage.getItem(poiKey(lat, lon));
+        if (!raw) return null;
+        const o = JSON.parse(raw);
+        if (!o || !o.ts) return null;
+        return { data: o, fresh: (Date.now() - o.ts) < POI_TTL_MS };
+      } catch { return null; }
+    }
+    function poiCacheSet(lat, lon, g) {
+      try {
+        localStorage.setItem(poiKey(lat, lon), JSON.stringify({
+          ts: Date.now(), place: g.place, locality: g.locality,
+          food: g.food, shops: g.shops, fuel: g.fuel
+        }));
+      } catch {}
+    }
+    function clearPoiCache() {
+      try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && k.indexOf(POI_CACHE_PREFIX) === 0) localStorage.removeItem(k);
+        }
+      } catch {}
+    }
+
+    // Two small concurrency pools so a single slow mirror can't stall everything
+    // and we never burst one service. Overpass runs a few in parallel across the
+    // rotating mirrors; Nominatim stays gentle (its policy is ~1 req/s). A click
+    // jumps that stop's pending jobs to the front of each pool.
+    function makePool(maxConcurrent, minGap) {
+      const q = [];
+      let active = 0, last = 0;
+      function pump() {
+        if (active >= maxConcurrent || !q.length) return;
+        const item = q.shift();
+        active++;
+        const gap = minGap ? Math.max(0, minGap - (Date.now() - last)) : 0;
+        setTimeout(() => {
+          last = Date.now();
+          Promise.resolve().then(item.task).then(item.resolve, item.reject)
+            .finally(() => { active--; pump(); });
+        }, gap);
+        if (active < maxConcurrent) pump(); // fill the remaining slots
+      }
+      return {
+        add(task, stop, priority) {
+          return new Promise((resolve, reject) => {
+            const it = { task, resolve, reject, stop };
+            if (priority) q.unshift(it); else q.push(it);
+            pump();
+          });
+        },
+        bump(stop) {
+          for (let i = q.length - 1; i > 0; i--) {
+            if (q[i].stop === stop) q.unshift(q.splice(i, 1)[0]);
+          }
+        }
+      };
+    }
+    const opPool = makePool(3, 180);   // Overpass: up to 3 in flight, slight stagger
+    const nomPool = makePool(1, 1100); // Nominatim: one at a time, ~1 req/s
+    function bumpStop(stop) { opPool.bump(stop); nomPool.bump(stop); }
 
     // ---- Offline fallback stops (used only if the live Google My Maps KML can't be
     //      reached). Mirrors the Google map in travel order. day / date / title are
@@ -709,7 +790,7 @@
     function showDetails(stop, day, color) {
       selected = { stop, day, color };
       document.getElementById("details").innerHTML = detailsHtml(stop, day, color);
-      loadPlace(stop);
+      loadPlace(stop, { priority: true });
     }
 
     // ---- Live place details from OpenStreetMap (on-demand per click) ----
@@ -830,21 +911,28 @@
       return null;
     }
     function overpassQuery(lat, lon) {
-      // Tighter radii + a hard result cap keep the response small and fast.
-      return `[out:json][timeout:12];(` +
+      // Tight radii + a hard result cap keep the response small and fast. A
+      // "nearby" eatery 4 km away is already plenty; fuel reaches a bit further.
+      return `[out:json][timeout:10];(` +
         `nwr(around:500,${lat},${lon})[tourism];` +
         `nwr(around:500,${lat},${lon})[leisure];` +
         `nwr(around:500,${lat},${lon})[historic];` +
         `nwr(around:700,${lat},${lon})[natural][name];` +
-        `nwr(around:7000,${lat},${lon})[amenity~"^(fast_food|restaurant|cafe)$"][name];` +
-        `nwr(around:7000,${lat},${lon})[shop~"^(supermarket|convenience|greengrocer|general)$"][name];` +
-        `nwr(around:9000,${lat},${lon})[amenity=fuel][name];` +
-        `);out tags center 80;`;
+        `nwr(around:4000,${lat},${lon})[amenity~"^(fast_food|restaurant|cafe)$"][name];` +
+        `nwr(around:4000,${lat},${lon})[shop~"^(supermarket|convenience|greengrocer|general)$"][name];` +
+        `nwr(around:8000,${lat},${lon})[amenity=fuel][name];` +
+        `);out tags center 40;`;
     }
+    const _opCooldown = {}; // endpoint -> timestamp until which to skip it
+    let _opTick = 0;        // spread concurrent calls across mirrors
     async function overpass(lat, lon) {
       const body = "data=" + encodeURIComponent(overpassQuery(lat, lon));
+      const eps = OVERPASS_ENDPOINTS, n = eps.length;
+      const start = _opTick++ % n; // each concurrent call begins on a different mirror
       let lastErr;
-      for (const ep of OVERPASS_ENDPOINTS) {
+      for (let i = 0; i < n; i++) {
+        const ep = eps[(start + i) % n];
+        if (_opCooldown[ep] && Date.now() < _opCooldown[ep]) continue; // parked mirror — skip
         const ctl = new AbortController();
         const timer = setTimeout(() => ctl.abort(), OVERPASS_TIMEOUT_MS);
         try {
@@ -852,6 +940,10 @@
             method: "POST", body, signal: ctl.signal,
             headers: { "Content-Type": "application/x-www-form-urlencoded" }
           });
+          if (r.status === 429 || r.status === 503 || r.status === 504) {
+            _opCooldown[ep] = Date.now() + OP_COOLDOWN_MS; // throttled — park it for a minute
+            throw new Error("HTTP " + r.status);
+          }
           if (!r.ok) throw new Error("HTTP " + r.status);
           return await r.json();
         } catch (e) {
@@ -860,7 +952,7 @@
           clearTimeout(timer);
         }
       }
-      throw lastErr || new Error("Overpass unavailable");
+      throw lastErr || new Error("Overpass busy");
     }
     function dedupe(arr) {
       const seen = new Set(), out = [];
@@ -902,27 +994,59 @@
       g.shops = dedupe(shops).slice(0, 3);
       g.fuel = dedupe(fuel).slice(0, 3);
     }
-    async function loadPlace(stop) {
-      if (stop._gState) return; // already loading or done
-      stop._gState = "loading";
-      const g = stop._g = { place: null, locality: null, food: [], shops: [], fuel: [] };
+    async function loadPlace(stop, opts) {
+      opts = opts || {};
+      if (stop._gState === "loading") { if (opts.priority) bumpStop(stop); return; }
+      if (stop._gState === "done") return;
+
+      // 1) Serve instantly from the persistent cache — stops are fixed and POIs
+      //    barely change, so this is zero-network and avoids the rate limits.
+      const cached = poiCacheGet(stop.lat, stop.lon);
+      if (cached) {
+        const c = cached.data;
+        stop._g = {
+          place: c.place || null, locality: c.locality || null,
+          food: c.food || [], shops: c.shops || [], fuel: c.fuel || []
+        };
+        stop._gState = "done";
+        refreshStop(stop);
+        if (cached.fresh || opts.noRevalidate) return; // fresh enough — done
+        // stale: keep the shown data and quietly refresh it through the queue below
+      } else {
+        stop._gState = "loading";
+        stop._g = { place: null, locality: null, food: [], shops: [], fuel: [] };
+      }
+
+      const g = stop._g;
+      const pri = !!opts.priority;
       const jobs = [];
-      jobs.push((async () => {
-        try {
-          const d = await getJson(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&lat=${stop.lat}&lon=${stop.lon}`);
-          g.locality = formatLocality(d);
-        } catch {}
+      if (!g.locality) {
+        jobs.push(nomPool.add(async () => {
+          try {
+            const d = await getJson(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&lat=${stop.lat}&lon=${stop.lon}`);
+            g.locality = formatLocality(d);
+          } catch {}
+          refreshStop(stop);
+        }, stop, pri));
+      }
+      jobs.push(opPool.add(async () => {
+        try { parseOverpass(stop, g, await overpass(stop.lat, stop.lon)); } catch {}
         refreshStop(stop);
-      })());
-      jobs.push((async () => {
-        try {
-          parseOverpass(stop, g, await overpass(stop.lat, stop.lon));
-        } catch {}
-        refreshStop(stop);
-      })());
+      }, stop, pri));
+
       await Promise.allSettled(jobs);
       stop._gState = "done";
+      // Persist only a real result — never cache an empty failure as if it were final.
+      if (g.locality || g.place || (g.food && g.food.length) || (g.shops && g.shops.length) || (g.fuel && g.fuel.length)) {
+        poiCacheSet(stop.lat, stop.lon, g);
+      }
       refreshStop(stop);
+    }
+    // Warm the cache for every stop in the background. Cached stops cost nothing;
+    // uncached ones fill in gently through the throttled queue, so by the time you
+    // click a stop its nearby info is usually already there — and no 429 bursts.
+    function prewarmPlaces() {
+      TRIP.forEach((d) => d.stops.forEach((s) => loadPlace(s)));
     }
     function renderMap() {
       if (!map) return;
@@ -1084,6 +1208,7 @@
     // Reload the live trip from Google My Maps, then refresh the weather.
     async function refreshAll() {
       setStatus("warn", "Refreshing trip from Google My Maps…");
+      clearPoiCache(); // manual refresh = force fresh nearby info (re-fetched gently in the background)
       try {
         await loadLiveTrip();
         normalizeDates();
@@ -1091,6 +1216,7 @@
         renderMap();
       } catch (e) { /* keep current stops */ }
       fetchWeather();
+      prewarmPlaces();
     }
 
     // ---- Boot: instant map from saved stops, then live Google My Maps + weather ----
@@ -1109,6 +1235,7 @@
         setStatus("warn", "Showing saved trip — couldn't reach Google My Maps live.");
       }
       fetchWeather();       // weather fills the popups + legend when it arrives
+      prewarmPlaces();      // gently warm the nearby-info cache in the background
     }
 
     boot();
