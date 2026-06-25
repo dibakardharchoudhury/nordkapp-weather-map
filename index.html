@@ -203,6 +203,7 @@
     .pop-wx .pt { font-weight: 700; }
     .pop-wx .pt .lo { color: #0078d4; } .pop-wx .pt .hi { color: #dc2626; }
     .pop-sub { font-size: 0.76rem; color: #555; margin-top: 4px; }
+    .pop-loc { font-size: 0.78rem; color: #1f2937; margin-top: 4px; font-weight: 600; }
     .legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--cp-border); font-size: 0.8rem; color: var(--cp-text-muted); }
     .legend .lg { display: inline-flex; align-items: center; gap: 6px; }
     .legend .sw { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1px var(--cp-border); }
@@ -214,6 +215,8 @@
     .det-icon { font-size: 1.9rem; line-height: 1; }
     .det-name { font-weight: 700; font-size: 1.1rem; }
     .det-sub { font-size: 0.78rem; color: var(--cp-text-muted); text-transform: uppercase; letter-spacing: .03em; margin-top: 2px; font-weight: 600; }
+    .det-loc { font-size: 0.9rem; color: var(--cp-text); margin-top: 5px; font-weight: 600; }
+    .det-coords { margin-top: 3px; }
     .det-coords a { color: var(--cp-link); text-decoration: none; font-size: 0.8rem; }
     .det-coords a:hover { text-decoration: underline; }
     .det-badge { margin-left: auto; align-self: flex-start; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 3px 10px; border-radius: 999px; background: var(--cp-accent-soft); color: var(--cp-accent); white-space: nowrap; }
@@ -400,6 +403,8 @@
     }
     function popupHtml(stop, day, color) {
       const w = stop._wx;
+      const loc = addrText(stop);
+      const locHtml = loc ? `<div class="pop-loc">📍 ${loc}</div>` : "";
       const wx = !w
         ? `<div class="pop-sub">Loading weather…</div>`
         : `<div class="pop-wx">
@@ -408,8 +413,8 @@
            </div>
            <div class="pop-sub">💨 ${fmt(w.wind)} km/h${w.gust != null ? ` (gust ${fmt(w.gust)})` : ""} · 🌧️ ${w.psum != null ? fmt(w.psum) : "—"} mm${w.pprob != null ? ` · ${fmt(w.pprob)}%` : ""}</div>`;
       return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${stop.name}</div>
-              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${wx}
-              <div class="pop-sub"><a href="https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}" target="_blank" rel="noopener">${stop.lat.toFixed(4)}, ${stop.lon.toFixed(4)} ↗</a></div>`;
+              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${locHtml}${wx}
+              <div class="pop-sub"><a href="https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}" target="_blank" rel="noopener">${stop.lat.toFixed(4)}, ${stop.lon.toFixed(4)} ↗ Google Maps</a></div>`;
     }
 
     // ---- Clicked-stop details panel (below the map) ----
@@ -434,6 +439,7 @@
                 <div>
                   <div class="det-name">${stop.name}</div>
                   <div class="det-sub" style="color:${color}">${day.label} · ${day.title}</div>
+                  <div class="det-loc">📍 ${addrText(stop) || "Location not found"}</div>
                   <div class="det-coords"><a href="https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}" target="_blank" rel="noopener">${stop.lat.toFixed(4)}, ${stop.lon.toFixed(4)} ↗ open in Google Maps</a></div>
                 </div>
                 <span class="det-badge">${TYPE_LABEL[stop.type] || "Stop"}</span>
@@ -442,6 +448,41 @@
     function showDetails(stop, day, color) {
       selected = { stop, day, color };
       document.getElementById("details").innerHTML = detailsHtml(stop, day, color);
+      geocode(stop);
+    }
+
+    // ---- Reverse geocoding (OpenStreetMap Nominatim, on-demand per click) ----
+    function addrText(stop) {
+      if (stop._addr) return stop._addr;
+      if (stop._addrState === "done") return null;
+      return "Looking up location…";
+    }
+    function formatAddr(d) {
+      if (!d) return null;
+      const a = d.address || {};
+      const place = d.name || a.tourism || a.attraction || a.hamlet || a.village ||
+                    a.town || a.city || a.road || a.suburb;
+      const parts = [];
+      if (place) parts.push(place);
+      [a.municipality || a.city_district || a.county, a.state, a.country].forEach((r) => {
+        if (r && !parts.includes(r)) parts.push(r);
+      });
+      return parts.length ? parts.join(", ") : (d.display_name || null);
+    }
+    async function geocode(stop) {
+      if (stop._addrState) return; // already loading or done
+      stop._addrState = "loading";
+      try {
+        const u = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&lat=${stop.lat}&lon=${stop.lon}`;
+        stop._addr = formatAddr(await getJson(u));
+      } catch {
+        stop._addr = null;
+      }
+      stop._addrState = "done";
+      if (stop._marker && stop._day) stop._marker.setPopupContent(popupHtml(stop, stop._day, stop._color));
+      if (selected && selected.stop === stop) {
+        document.getElementById("details").innerHTML = detailsHtml(stop, selected.day, selected.color);
+      }
     }
     function renderMap() {
       if (!map) return;
@@ -455,6 +496,8 @@
             .bindPopup(popupHtml(s, d, color));
           m.addTo(layer);
           s._marker = m;
+          s._day = d;
+          s._color = color;
           m.on("click", () => showDetails(s, d, color));
           line.push([s.lat, s.lon]);
           bounds.push([s.lat, s.lon]);
