@@ -764,15 +764,18 @@
         iconSize: [28, 40], iconAnchor: [14, 40], popupAnchor: [0, -36]
       });
     }
-    // Build a Google Maps link that searches for the stop's EXACT coordinates. Using
-    // the coordinate as the query makes Google land precisely on the point AND
-    // reverse-geocode it to the real place there, showing that place's actual name/
-    // card — instead of a text search (which mis-resolves generic names like
-    // "Stoppeplass") or a custom-labelled pin (which only shows our text, not the
-    // resolved place).
+    // Build a Google Maps link that resolves the named place AND pulls up its details
+    // card. Google needs the *name* in the query to surface a place card (a bare
+    // coordinate just drops an unnamed pin, because our hand-placed KML points rarely
+    // sit exactly on Google's POI centroid). We search for the name with the map
+    // centred on the stop's exact coordinates (`/@lat,lon,16z`) so the correct nearby
+    // place is the one Google highlights — even for generic names like "Stoppeplass".
     function gmapsLink(stop) {
-      const coords = `${stop.lat},${stop.lon}`;
-      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(coords)}`;
+      const name = (stop.name || "").trim();
+      if (!name) {
+        return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${stop.lat},${stop.lon}`)}`;
+      }
+      return `https://www.google.com/maps/search/${encodeURIComponent(name)}/@${stop.lat},${stop.lon},16z`;
     }
     function popupHtml(stop, day, color) {
       const w = stop._wx;
