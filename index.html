@@ -92,8 +92,8 @@
       display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
       gap: 16px; margin-bottom: 22px;
     }
-    .hero h1 { font-size: 1.7rem; margin: 0 0 4px; letter-spacing: -0.01em; }
-    .hero .sub { color: var(--cp-text-muted); font-size: 0.95rem; }
+    .hero h1 { font-size: 1.5rem; margin: 0 0 3px; letter-spacing: -0.02em; font-weight: 700; }
+    .hero .sub { color: var(--cp-text-muted); font-size: 0.9rem; }
     .hero .badge {
       display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: 999px;
       background: var(--cp-accent-soft); color: var(--cp-accent); font-size: 0.8rem; font-weight: 600;
@@ -108,6 +108,7 @@
     button.btn.primary { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
     button.btn.primary:hover { background: var(--cp-accent-hover); }
     button.btn:disabled { opacity: .55; cursor: default; }
+    button.btn.icon { padding: 8px 11px; font-size: 1.05rem; line-height: 1; }
 
     .card {
       background: var(--cp-surface); border: 1px solid var(--cp-border);
@@ -208,7 +209,7 @@
     .pop-loc { font-size: 0.78rem; color: #1f2937; margin-top: 4px; font-weight: 600; }
     .pop-desc { font-size: 0.76rem; color: #374151; margin-top: 5px; line-height: 1.4; }
     .legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--cp-border); font-size: 0.8rem; color: var(--cp-text-muted); }
-    .legend .lg { display: inline-flex; align-items: center; gap: 6px; }
+    .legend .lg { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
     .legend .sw { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1px var(--cp-border); }
 
     /* Clicked-stop details panel */
@@ -305,6 +306,7 @@
       .hero .sub { font-size: 0.88rem; }
       .toolbar { width: 100%; }
       button.btn { flex: 1 1 auto; text-align: center; padding: 9px 12px; }
+      button.btn.icon { flex: 0 0 auto; }
       .map-card .map-head { padding: 10px 13px; }
       #leaflet { height: clamp(320px, 56vh, 540px); }
       .map-frame { min-height: 280px; }
@@ -330,7 +332,7 @@
       .near-chip { font-size: 0.6rem; padding: 2px 6px; }
       .near-hours { font-size: 0.68rem; }
       .det-day-meta { font-size: 0.72rem; }
-      .legend { gap: 10px; padding: 10px 13px; font-size: 0.74rem; }
+      .legend { gap: 12px; padding: 9px 13px; font-size: 0.74rem; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
       .leaflet-popup-content { min-width: 160px; font-size: 0.82rem; }
     }
     @media (max-width: 380px) {
@@ -345,32 +347,27 @@
 <body>
   <div class="wrap">
     <header class="hero">
-      <div>
-        <h1>🚗❄️ Nordkapp Roadtrip · Live Weather & POI Map</h1>
-        <div class="sub">Every stop on the drive to the top of Europe — click a marker for that day's forecast.</div>
+      <div class="hero-title">
+        <h1>Nordkapp Roadtrip</h1>
+        <div class="sub">Tap a stop for its forecast &amp; nearby spots.</div>
       </div>
       <div class="toolbar">
-        <button class="btn" id="themeBtn" title="Toggle light/dark">🌗 Theme</button>
-        <button class="btn primary" id="refreshBtn">↻ Refresh</button>
+        <button class="btn icon" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">🌗</button>
+        <button class="btn primary" id="refreshBtn" title="Refresh">↻ Refresh</button>
       </div>
     </header>
 
     <div class="card map-card">
       <div class="map-head">
-        <h2>🌦️ Weather map</h2>
-        <span class="status" id="status"><span class="dot" id="statusDot"></span><span id="statusText">Loading forecast…</span></span>
+        <span class="status" id="status"><span class="dot" id="statusDot"></span><span id="statusText">Loading…</span></span>
       </div>
       <div id="leaflet"></div>
       <div class="legend" id="legend"></div>
-      <div class="details" id="details"><div class="details-empty">📍 Click any stop on the map to see its full details and weather here.</div></div>
+      <div class="details" id="details"><div class="details-empty">Tap any stop on the map for its details.</div></div>
     </div>
 
     <footer class="note">
-      Stops from the Nordkapp Google My Map · weather by
-      <a href="https://www.yr.no/" target="_blank" rel="noopener">Yr.no / MET Norway</a> (free, no key).
-      Each stop shows current conditions plus the daily forecast for that trip date. Yr's forecast reaches ~9 days
-      ahead; for stops further out, only current conditions are shown — no less-reliable source is substituted.
-      Map tiles © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>.
+      Weather · MET Norway. Map · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>.
     </footer>
   </div>
 
@@ -759,7 +756,7 @@
            </div>
            <div class="pop-sub">💨 ${fmt(w.wind)} km/h${w.gust != null ? ` (gust ${fmt(w.gust)})` : ""} · 🌧️ ${w.psum != null ? fmt(w.psum) : "—"} mm${w.pprob != null ? ` · ${fmt(w.pprob)}%` : ""}</div>`
         : stop._wxState === "beyond"
-          ? `<div class="pop-sub">🗓️ No forecast yet — this date is beyond Yr's ~9-day range</div>${seasonalNormalHtml(stop, day, "pop-sub")}`
+          ? seasonalNormalHtml(stop, day, "pop-sub")
           : stop._wxState === "fail"
             ? `<div class="pop-sub">⚠️ Weather unavailable</div>`
             : `<div class="pop-sub">Loading weather…</div>`;
@@ -795,7 +792,7 @@
              </div>
            </div>`
         : stop._wxState === "beyond"
-          ? `<div class="det-sub" style="margin-top:12px">🗓️ Forecast for ${shortDate(day.date)} isn't available yet — it's beyond Yr's ~9-day range. Current conditions below.</div>${seasonalNormalHtml(stop, day, "det-sub")}`
+          ? `<div class="det-sub" style="margin-top:12px;font-weight:700">🗓️ ${shortDate(day.date)}</div>${seasonalNormalHtml(stop, day, "det-sub")}`
           : stop._wxState === "fail"
             ? `<div class="det-sub" style="margin-top:12px">⚠️ Weather unavailable for this stop.</div>`
             : `<div class="det-sub" style="margin-top:12px">Loading weather…</div>`;
@@ -1441,7 +1438,7 @@
     function seasonalNormalHtml(stop, day, cls) {
       const n = seasonalNormal(stop.lat, day && day.date);
       if (!n) return "";
-      return `<div class="${cls}">🌡️ Seasonal normal for ${n.month}: typically ~${n.hi}° / ${n.lo}°C <span style="opacity:.7">(historical average — not a forecast)</span></div>`;
+      return `<div class="${cls}">🌡️ ${n.month} average ~${n.hi}° / ${n.lo}°C <span style="opacity:.65">· typical, not a forecast</span></div>`;
     }
 
     // Pull the MET Norway / Yr.no forecast for one point and aggregate it to per-day values
@@ -1510,9 +1507,9 @@
 
     async function fetchWeather() {
       const stops = allStops();
-      if (!stops.length) { setStatus("ok", "No stops to forecast yet."); return; }
+      if (!stops.length) { setStatus("ok", "No stops yet."); return; }
 
-      setStatus("warn", "Fetching live forecast from Yr.no…");
+      setStatus("warn", "Loading forecast…");
 
       const coordKey = (s) => s.lat.toFixed(4) + "," + s.lon.toFixed(4);
 
@@ -1543,16 +1540,16 @@
       repaintWeather();
 
       if (metData.size === 0) {
-        setStatus("err", "Could not load weather from Yr.no. Check your internet connection and press “Refresh weather”.");
+        setStatus("err", "Weather unavailable — tap ↻ Refresh to retry.");
         markAllError();
         return;
       }
 
-      const when = new Date().toLocaleString();
+      const when = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       if (beyond) {
-        setStatus("ok", `Live Yr.no forecast loaded · ${beyond} stop${beyond > 1 ? "s" : ""} beyond Yr's ~9-day range show current conditions only · updated ${when}`);
+        setStatus("ok", `Updated ${when} · ${beyond} distant stop${beyond > 1 ? "s" : ""} show seasonal averages`);
       } else {
-        setStatus("ok", `Live Yr.no forecast loaded · updated ${when}`);
+        setStatus("ok", `Updated ${when}`);
       }
     }
 
@@ -1573,7 +1570,7 @@
           if (selected && selected.stop === s) showDetails(s, d, color);
         });
         const rng = document.getElementById(`rng-${d.day}`);
-        if (rng) rng.textContent = isFinite(lo) ? `${fmt(lo)}…${fmt(hi)}°C` : "beyond Yr range";
+        if (rng) rng.textContent = isFinite(lo) ? `${fmt(lo)}…${fmt(hi)}°C` : "seasonal";
       });
     }
 
@@ -1608,7 +1605,7 @@
 
     // Reload the live trip from Google My Maps, then refresh the weather.
     async function refreshAll() {
-      setStatus("warn", "Refreshing trip from Google My Maps…");
+      setStatus("warn", "Refreshing trip…");
       clearPoiCache(); // manual refresh = force fresh nearby info (re-fetched gently in the background)
       try {
         await loadLiveTrip();
@@ -1626,7 +1623,7 @@
       assignLegMetrics();
       initMap();
       renderMap();          // saved stops appear immediately (no network wait)
-      setStatus("warn", "Loading live trip from Google My Maps…");
+      setStatus("warn", "Loading trip…");
       try {
         await loadLiveTrip();
         normalizeDates();
