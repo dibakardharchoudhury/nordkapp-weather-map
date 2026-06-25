@@ -237,11 +237,50 @@
     .det-temps .desc { font-size: 0.86rem; color: var(--cp-text-muted); }
     .det-metrics { display: flex; gap: 20px; flex-wrap: wrap; font-size: 0.88rem; color: var(--cp-text-muted); }
     .det-metrics b { color: var(--cp-text); font-weight: 600; }
-    .det-near { margin-top: 18px; }
-    .near-title { font-size: 0.8rem; font-weight: 700; color: var(--cp-text); margin-bottom: 8px; letter-spacing: .01em; display: flex; align-items: center; gap: 7px; }
+    .det-near { margin-top: 14px; border-top: 1px solid var(--cp-border); }
+    .det-near > summary.near-title {
+      list-style: none; cursor: pointer; user-select: none;
+      display: flex; align-items: center; gap: 9px;
+      font-size: 0.82rem; font-weight: 700; color: var(--cp-text); letter-spacing: .01em;
+      padding: 11px 8px; margin: 0 -8px; border-radius: 11px;
+      transition: background .16s ease, color .16s ease;
+    }
+    .det-near > summary.near-title::-webkit-details-marker { display: none; }
+    .det-near > summary.near-title:hover { background: var(--cp-accent-soft); color: var(--cp-accent); }
+    .det-near > summary.near-title:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 2px; }
+    .near-chev {
+      flex: 0 0 auto; width: 6px; height: 6px; margin: 0 3px 1px 2px; display: inline-block;
+      border-right: 2px solid var(--cp-text-soft); border-bottom: 2px solid var(--cp-text-soft);
+      border-radius: 1px; transform: rotate(-45deg); transition: transform .22s ease, border-color .16s ease;
+    }
+    .det-near[open] > summary.near-title .near-chev { transform: rotate(45deg); }
+    .det-near > summary.near-title:hover .near-chev { border-color: var(--cp-accent); }
+    .near-titletext { flex: 1 1 auto; min-width: 0; }
+    .near-count {
+      flex: 0 0 auto; font-size: 0.68rem; font-weight: 800; line-height: 1;
+      color: var(--cp-accent); background: var(--cp-accent-soft);
+      min-width: 20px; text-align: center; padding: 4px 8px; border-radius: 999px;
+    }
+    .near-count-zero { color: var(--cp-text-soft); background: var(--cp-surface-soft); }
+    .near-spin {
+      flex: 0 0 auto; width: 13px; height: 13px; border-radius: 50%;
+      border: 2px solid var(--cp-border); border-top-color: var(--cp-accent);
+      animation: nearSpin .7s linear infinite;
+    }
+    @keyframes nearSpin { to { transform: rotate(360deg); } }
+    .near-wrap { padding: 2px 0 12px; animation: nearReveal .22s ease both; }
+    @keyframes nearReveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
     .near-empty { font-size: 0.82rem; color: var(--cp-text-muted); font-style: italic; padding: 2px 0; }
-    .near-list { display: flex; flex-direction: column; gap: 6px; }
-    .near-item { display: flex; align-items: center; gap: 10px; padding: 8px 11px; border-radius: 11px; background: var(--cp-surface-soft); border: 1px solid var(--cp-border); }
+    .near-list { display: flex; flex-direction: column; gap: 7px; }
+    .near-item {
+      display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 12px;
+      background: var(--cp-surface-soft); border: 1px solid var(--cp-border);
+      transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+    }
+    .near-item:hover {
+      border-color: var(--cp-border-strong); transform: translateX(2px);
+      box-shadow: 0 3px 12px rgba(0, 0, 0, 0.06);
+    }
     .near-ic { flex: 0 0 auto; width: 1.5rem; text-align: center; font-size: 1.15rem; line-height: 1; }
     .near-body { flex: 1 1 auto; min-width: 0; }
     .near-line { display: flex; align-items: baseline; gap: 8px; }
@@ -280,10 +319,11 @@
       .det-wx .big { font-size: 2.1rem; }
       .det-temps .range { font-size: 1.25rem; }
       .det-metrics { gap: 12px; font-size: 0.82rem; }
-      .det-near { margin-top: 14px; }
-      .near-title { font-size: 0.76rem; margin-bottom: 6px; }
-      .near-list { gap: 5px; }
-      .near-item { padding: 7px 10px; gap: 9px; }
+      .det-near { margin-top: 12px; }
+      .det-near > summary.near-title { font-size: 0.76rem; padding: 10px 6px; margin: 0 -6px; gap: 8px; }
+      .near-wrap { padding-bottom: 10px; }
+      .near-list { gap: 6px; }
+      .near-item { padding: 8px 10px; gap: 9px; }
       .near-ic { width: 1.4rem; font-size: 1.05rem; }
       .near-name { font-size: 0.84rem; }
       .near-dist { font-size: 0.68rem; }
@@ -777,9 +817,9 @@
                <span>🌧️ <b>${w.psum != null ? fmt(w.psum) : "—"}</b> mm${w.pprob != null ? ` · <b>${fmt(w.pprob)}%</b> chance` : ""}</span>
              </div>
            </div>`;
-      const foodHtml = nearList("🍔 Food & restaurants", g ? g.food : [], done, "None mapped nearby");
-      const shopsHtml = nearList("🛒 Grocery stores", g ? g.shops : [], done, "None mapped nearby");
-      const fuelHtml = nearList("⛽ Gas stations · ☕ coffee · 🚻 toilet", g ? g.fuel : [], done, "None mapped nearby");
+      const foodHtml = nearList("🍔 Food & restaurants", "food", g ? g.food : [], done, "None mapped nearby");
+      const shopsHtml = nearList("🛒 Grocery stores", "shops", g ? g.shops : [], done, "None mapped nearby");
+      const fuelHtml = nearList("⛽ Gas stations · ☕ coffee · 🚻 toilet", "fuel", g ? g.fuel : [], done, "None mapped nearby");
       return `<div class="det-head">
                 <span class="det-icon">${TYPE_ICON[stop.type] || "📍"}</span>
                 <div>
@@ -829,28 +869,43 @@
       if (h === "24/7") return "Open 24/7";
       return h.replace(/;\s*/g, " · ");
     }
-    function nearList(title, items, done, emptyMsg) {
-      if (!done && (!items || !items.length)) {
-        return `<div class="det-near"><div class="near-title">${title}</div><div class="near-empty">Searching…</div></div>`;
+    // Remembers which POI sections the user collapsed, so re-renders keep their choice.
+    const poiCollapsed = { food: false, shops: false, fuel: false };
+    function poiToggle(key, el) { if (key in poiCollapsed) poiCollapsed[key] = !el.open; }
+
+    function nearList(title, key, items, done, emptyMsg) {
+      const count = items ? items.length : 0;
+      let inner, badge;
+      if (!done && !count) {
+        inner = `<div class="near-empty">Searching…</div>`;
+        badge = `<span class="near-spin" aria-hidden="true"></span>`;
+      } else if (!count) {
+        inner = `<div class="near-empty">${emptyMsg}</div>`;
+        badge = `<span class="near-count near-count-zero">0</span>`;
+      } else {
+        const rows = items.map((x) => {
+          const bits = [];
+          if (x.coffee) bits.push(`<span class="near-chip">☕ coffee</span>`);
+          if (x.toilet) bits.push(`<span class="near-chip">🚹 toilet</span>`);
+          if (x.hours) bits.push(`<span class="near-hours">⏰ ${hoursLabel(x.hours)}</span>`);
+          const sub = bits.length ? `<div class="near-sub">${bits.join("")}</div>` : "";
+          return `<div class="near-item">` +
+            `<span class="near-ic">${x.icon}</span>` +
+            `<div class="near-body">` +
+              `<div class="near-line"><span class="near-name">${x.name}</span><span class="near-dist">${distLabel(x.dist)}</span></div>` +
+              sub +
+            `</div>` +
+            `</div>`;
+        }).join("");
+        inner = `<div class="near-list">${rows}</div>`;
+        badge = `<span class="near-count">${count}</span>`;
       }
-      if (!items || !items.length) {
-        return `<div class="det-near"><div class="near-title">${title}</div><div class="near-empty">${emptyMsg}</div></div>`;
-      }
-      const rows = items.map((x) => {
-        const bits = [];
-        if (x.coffee) bits.push(`<span class="near-chip">☕ coffee</span>`);
-        if (x.toilet) bits.push(`<span class="near-chip">🚹 toilet</span>`);
-        if (x.hours) bits.push(`<span class="near-hours">⏰ ${hoursLabel(x.hours)}</span>`);
-        const sub = bits.length ? `<div class="near-sub">${bits.join("")}</div>` : "";
-        return `<div class="near-item">` +
-          `<span class="near-ic">${x.icon}</span>` +
-          `<div class="near-body">` +
-            `<div class="near-line"><span class="near-name">${x.name}</span><span class="near-dist">${distLabel(x.dist)}</span></div>` +
-            sub +
-          `</div>` +
-          `</div>`;
-      }).join("");
-      return `<div class="det-near"><div class="near-title">${title}</div><div class="near-list">${rows}</div></div>`;
+      const open = poiCollapsed[key] ? "" : " open";
+      return `<details class="det-near" ontoggle="poiToggle('${key}', this)"${open}>` +
+               `<summary class="near-title"><span class="near-chev" aria-hidden="true"></span>` +
+                 `<span class="near-titletext">${title}</span>${badge}</summary>` +
+               `<div class="near-wrap">${inner}</div>` +
+             `</details>`;
     }
 
     const OSM_LABELS = {
