@@ -1198,10 +1198,11 @@
       return !!(g && (g.place || (g.food && g.food.length) ||
         (g.shops && g.shops.length) || (g.fuel && g.fuel.length)));
     }
-    // One keyless path for every stop: hit Overpass and Photon in parallel and
-    // keep whichever independent provider returns usable data first. If one is
-    // throttled the other still answers, and the race is capped at 5 s so a click
-    // is never left waiting — the localStorage cache then makes repeats instant.
+    // One keyless path for every stop. A background prewarm uses only the lenient
+    // Photon provider (gentle, no 429). A click also queries Overpass, which is the
+    // ONLY source that carries the full OSM tags — coffee, toilets and
+    // opening_hours — so on a click we PREFER the Overpass result and fall back to
+    // Photon only if it returns nothing. The whole thing is capped at 5 s.
     async function loadNearby(stop, g, useOverpass) {
       const NEARBY_BUDGET_MS = 5000;
       let responded = false; // did at least one provider actually return an answer?
@@ -1219,11 +1220,12 @@
           )
         : Promise.resolve(null);
       const timeout = new Promise((r) => setTimeout(() => r("TIMEOUT"), NEARBY_BUDGET_MS));
-      const winner = await Promise.race([
-        (async () => { const t = await ph; return gHasNearby(t) ? t : await op; })(),
-        (async () => { const t = await op; return gHasNearby(t) ? t : await ph; })(),
-        timeout
-      ]);
+      // On a click prefer tag-rich Overpass; for a prewarm just take Photon. Both
+      // requests already run in parallel — this only decides which result wins.
+      const pick = useOverpass
+        ? (async () => { const a = await op; if (gHasNearby(a)) return a; const b = await ph; return gHasNearby(b) ? b : a; })()
+        : (async () => { const a = await ph; if (gHasNearby(a)) return a; return await op; })();
+      const winner = await Promise.race([pick, timeout]);
       const chosen = (winner && winner !== "TIMEOUT" && gHasNearby(winner)) ? winner : null;
       if (chosen) { g.place = chosen.place; g.food = chosen.food; g.shops = chosen.shops; g.fuel = chosen.fuel; }
       return responded; // false ⇒ everything failed; caller keeps the entry revalidatable
