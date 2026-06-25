@@ -750,10 +750,6 @@
       const g = stop._g;
       const loc = addrText(stop);
       const locHtml = loc ? `<div class="pop-loc">📍 ${loc}</div>` : "";
-      const place = g && g.place ? g.place.type : null;
-      const descHtml = place
-        ? `<div class="pop-desc">${place}${g.place.name && g.place.name !== place ? " · " + g.place.name : ""}</div>`
-        : "";
       const nearShop = g && g.shops && g.shops[0];
       const gmLink = gmapsLink(stop);
       const wx = w
@@ -772,7 +768,7 @@
       const driveTxt = driveLine(stop, day);
       const dayMeta = driveTxt ? `<div class="pop-sub">${driveTxt}</div>` : "";
       return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${stop.name}</div>
-              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${dayMeta}${locHtml}${descHtml}${wx}${nowHtml}${shopHtml}
+              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${dayMeta}${locHtml}${wx}${nowHtml}${shopHtml}
               <div class="pop-sub"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>`;
     }
 
@@ -782,14 +778,6 @@
       const w = stop._wx;
       const g = stop._g;
       const done = stop._gState === "done";
-      let descBlock;
-      if (g && g.place) {
-        descBlock = `<div class="det-desc"><b>${g.place.type}</b>${g.place.name && g.place.name !== g.place.type ? " · " + g.place.name : ""}</div>`;
-      } else if (done) {
-        descBlock = `<div class="det-desc det-muted">No specific mapped feature right at this point.</div>`;
-      } else {
-        descBlock = `<div class="det-desc det-muted">ℹ️ Looking up this place on OpenStreetMap…</div>`;
-      }
       const loc = addrText(stop);
       const locLine = loc ? `<div class="det-loc">📍 ${loc}</div>` : "";
       const gmLink = gmapsLink(stop);
@@ -825,7 +813,7 @@
                   <div class="det-coords"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>
                 </div>
                 <span class="det-badge">${TYPE_LABEL[stop.type] || "Stop"}</span>
-              </div>${descBlock}${wx}${nowHtml}${foodHtml}${shopsHtml}${fuelHtml}`;
+              </div>${wx}${nowHtml}${foodHtml}${shopsHtml}${fuelHtml}`;
     }
     function showDetails(stop, day, color) {
       selected = { stop, day, color };
