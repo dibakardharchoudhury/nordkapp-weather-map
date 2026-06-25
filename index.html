@@ -764,14 +764,17 @@
         iconSize: [28, 40], iconAnchor: [14, 40], popupAnchor: [0, -36]
       });
     }
-    // Build a Google Maps link that resolves the *named* place (e.g. "Arctic Circle
-    // Center" or a specific Tesla Supercharger) by searching for the stop's name
-    // biased to its exact coordinates — instead of dropping a nameless pin.
+    // Build a Google Maps link that drops a pin at the stop's EXACT coordinates and
+    // labels it with the place name. We use the `q=lat,lon(Name)` form rather than a
+    // text search: a text search for a generic name like "Stoppeplass" (Norwegian for
+    // "rest stop", which exists in thousands of spots) would resolve to the wrong
+    // place, whereas this form always anchors on the precise coordinates while still
+    // showing the name as the marker label.
     function gmapsLink(stop) {
       const coords = `${stop.lat},${stop.lon}`;
       const name = (stop.name || "").trim();
-      const query = name ? `${name} ${coords}` : coords;
-      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+      const q = name ? `${coords}(${name})` : coords;
+      return `https://www.google.com/maps?q=${encodeURIComponent(q)}`;
     }
     function popupHtml(stop, day, color) {
       const w = stop._wx;
