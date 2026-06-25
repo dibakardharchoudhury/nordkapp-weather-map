@@ -8,7 +8,7 @@
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <link rel="preconnect" href="https://api.open-meteo.com" crossorigin />
+  <link rel="preconnect" href="https://api.met.no" crossorigin />
   <link rel="preconnect" href="https://a.tile.openstreetmap.org" crossorigin />
   <link rel="preconnect" href="https://b.tile.openstreetmap.org" crossorigin />
   <link rel="preconnect" href="https://c.tile.openstreetmap.org" crossorigin />
@@ -367,9 +367,9 @@
 
     <footer class="note">
       Stops from the Nordkapp Google My Map · weather by
-      <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (free, no key).
-      Temperatures °C, wind km/h. Each marker shows the forecast for that day's date; trip dates beyond the
-      ~16-day live window fall back to last year's same-date readings as a seasonal estimate.
+      <a href="https://www.yr.no/" target="_blank" rel="noopener">Yr.no / MET Norway</a> (free, no key).
+      Each stop shows current conditions plus the daily forecast for that trip date. Yr's forecast reaches ~9 days
+      ahead; for stops further out, only current conditions are shown — no less-reliable source is substituted.
       Map tiles © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>.
     </footer>
   </div>
@@ -542,39 +542,6 @@
 
     const TYPE_ICON = { home: "🏠", charger: "⚡", sight: "📷", stay: "🛏️" };
     const TYPE_LABEL = { home: "Start", charger: "Charge", sight: "Sightseeing", stay: "Overnight" };
-
-    // WMO weather code → { icon, text }
-    const WMO = {
-      0:  ["☀️", "Clear sky"],
-      1:  ["🌤️", "Mainly clear"],
-      2:  ["⛅", "Partly cloudy"],
-      3:  ["☁️", "Overcast"],
-      45: ["🌫️", "Fog"],
-      48: ["🌫️", "Rime fog"],
-      51: ["🌦️", "Light drizzle"],
-      53: ["🌦️", "Drizzle"],
-      55: ["🌧️", "Dense drizzle"],
-      56: ["🌧️", "Freezing drizzle"],
-      57: ["🌧️", "Freezing drizzle"],
-      61: ["🌦️", "Light rain"],
-      63: ["🌧️", "Rain"],
-      65: ["🌧️", "Heavy rain"],
-      66: ["🌧️", "Freezing rain"],
-      67: ["🌧️", "Freezing rain"],
-      71: ["🌨️", "Light snow"],
-      73: ["🌨️", "Snow"],
-      75: ["❄️", "Heavy snow"],
-      77: ["🌨️", "Snow grains"],
-      80: ["🌦️", "Rain showers"],
-      81: ["🌧️", "Rain showers"],
-      82: ["⛈️", "Violent showers"],
-      85: ["🌨️", "Snow showers"],
-      86: ["❄️", "Heavy snow showers"],
-      95: ["⛈️", "Thunderstorm"],
-      96: ["⛈️", "Thunderstorm + hail"],
-      99: ["⛈️", "Thunderstorm + hail"]
-    };
-    const wmo = (c) => WMO[c] || ["🌡️", "—"];
 
     // ============================================================
     //  Dynamic dates — Day 1 = TRIP_START, each later day +1 calendar day
@@ -797,10 +764,11 @@
            </div>
            <div class="pop-sub">💨 ${fmt(w.wind)} km/h${w.gust != null ? ` (gust ${fmt(w.gust)})` : ""} · 🌧️ ${w.psum != null ? fmt(w.psum) : "—"} mm${w.pprob != null ? ` · ${fmt(w.pprob)}%` : ""}</div>`;
       const shopHtml = nearShop ? `<div class="pop-sub">🛒 Nearest shop: ${nearShop.name} (${distLabel(nearShop.dist)})</div>` : "";
+      const nowHtml = stop._now ? `<div class="pop-sub">🕒 Now ${fmt(stop._now.temp)}° ${stop._now.icon} ${stop._now.text}</div>` : "";
       const driveTxt = driveLine(stop, day);
       const dayMeta = driveTxt ? `<div class="pop-sub">${driveTxt}</div>` : "";
       return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${stop.name}</div>
-              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${dayMeta}${locHtml}${descHtml}${wx}${shopHtml}
+              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${dayMeta}${locHtml}${descHtml}${wx}${nowHtml}${shopHtml}
               <div class="pop-sub"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>`;
     }
 
@@ -823,7 +791,8 @@
       const gmLink = gmapsLink(stop);
       const wx = !w
         ? `<div class="det-sub" style="margin-top:12px">Loading weather…</div>`
-        : `<div class="det-wx">
+        : `<div class="det-sub" style="margin-top:12px;font-weight:700">🗓️ Forecast · ${shortDate(day.date)}</div>
+           <div class="det-wx">
              <span class="big">${w.icon}</span>
              <div class="det-temps">
                <div class="range"><span class="hi">${fmt(w.tmax)}°</span> / <span class="lo">${fmt(w.tmin)}°</span>C</div>
@@ -834,6 +803,7 @@
                <span>🌧️ <b>${w.psum != null ? fmt(w.psum) : "—"}</b> mm${w.pprob != null ? ` · <b>${fmt(w.pprob)}%</b> chance` : ""}</span>
              </div>
            </div>`;
+      const nowHtml = stop._now ? `<div class="det-now" style="margin-top:8px">🕒 <b>Right now:</b> ${fmt(stop._now.temp)}° · ${stop._now.icon} ${stop._now.text} · 💨 ${fmt(stop._now.wind)} km/h</div>` : "";
       const foodHtml = nearList("🍔 Food & restaurants", "food", g ? g.food : [], done, "None mapped nearby");
       const shopsHtml = nearList("🛒 Grocery stores", "shops", g ? g.shops : [], done, "None mapped nearby");
       const fuelHtml = nearList("⛽ Gas stations", "fuel", g ? g.fuel : [], done, "None mapped nearby");
@@ -847,7 +817,7 @@
                   <div class="det-coords"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>
                 </div>
                 <span class="det-badge">${TYPE_LABEL[stop.type] || "Stop"}</span>
-              </div>${descBlock}${wx}${foodHtml}${shopsHtml}${fuelHtml}`;
+              </div>${descBlock}${wx}${nowHtml}${foodHtml}${shopsHtml}${fuelHtml}`;
     }
     function showDetails(stop, day, color) {
       selected = { stop, day, color };
@@ -1397,100 +1367,180 @@
         .join("");
     }
 
-    // ---- Weather fetch (Open-Meteo) ----
-    const allStops = () => TRIP.flatMap((d) => d.stops.map((s) => ({ ...s, _day: d.day, _date: d.date })));
+    // ---- Weather fetch · Yr.no / MET Norway (the only source) ----
+    //  MET Norway — the data behind Yr.no — is the most accurate source for Norway. Its forecast
+    //  reaches ~9 days ahead; for trip days beyond that window we show only the live current
+    //  conditions and substitute no other (less reliable) source.
+    const metPool = makePool(4, 250);
 
-    function buildUrl(base, lats, lons, start, end) {
-      const params = new URLSearchParams({
-        latitude: lats.join(","),
-        longitude: lons.join(","),
-        daily: "weather_code,temperature_2m_max,temperature_2m_min,wind_speed_10m_max,wind_gusts_10m_max,precipitation_sum,precipitation_probability_max",
-        timezone: "Europe/Oslo",
-        wind_speed_unit: "kmh",
-        start_date: start,
-        end_date: end
+    // Flatten to the REAL stop objects (not copies) and tag each with its trip date,
+    // so the weather we write here lands on the same objects the markers use.
+    function allStops() {
+      const out = [];
+      TRIP.forEach((d) => d.stops.forEach((s) => { s._date = d.date; out.push(s); }));
+      return out;
+    }
+
+    // MET Norway symbol_code (e.g. "lightrainshowers_day") → [emoji, label]
+    const MET_SYM = {
+      clearsky: ["☀️", "Clear sky"],
+      fair: ["🌤️", "Fair"],
+      partlycloudy: ["⛅", "Partly cloudy"],
+      cloudy: ["☁️", "Cloudy"],
+      fog: ["🌫️", "Fog"],
+      lightrain: ["🌦️", "Light rain"],
+      rain: ["🌧️", "Rain"],
+      heavyrain: ["🌧️", "Heavy rain"],
+      lightrainshowers: ["🌦️", "Light rain showers"],
+      rainshowers: ["🌦️", "Rain showers"],
+      heavyrainshowers: ["🌧️", "Heavy rain showers"],
+      lightsleet: ["🌨️", "Light sleet"],
+      sleet: ["🌨️", "Sleet"],
+      heavysleet: ["🌨️", "Heavy sleet"],
+      lightsleetshowers: ["🌨️", "Light sleet showers"],
+      sleetshowers: ["🌨️", "Sleet showers"],
+      heavysleetshowers: ["🌨️", "Heavy sleet showers"],
+      lightsnow: ["🌨️", "Light snow"],
+      snow: ["🌨️", "Snow"],
+      heavysnow: ["❄️", "Heavy snow"],
+      lightsnowshowers: ["🌨️", "Light snow showers"],
+      snowshowers: ["🌨️", "Snow showers"],
+      heavysnowshowers: ["❄️", "Heavy snow showers"]
+    };
+    function metSymbol(code) {
+      if (!code) return ["🌡️", "—"];
+      const base = String(code).replace(/_(day|night|polartwilight)$/, "");
+      if (base.includes("andthunder")) {
+        const t = MET_SYM[base.replace("andthunder", "")];
+        return ["⛈️", (t ? t[1] : "Showers") + " and thunder"];
+      }
+      return MET_SYM[base] || ["🌡️", "—"];
+    }
+
+    // Pull the MET Norway / Yr.no forecast for one point and aggregate it to per-day values
+    // (keyed by Oslo-local date) plus a "now" snapshot from the first hour.
+    async function fetchMetDaily(lat, lon) {
+      const url = `https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}`;
+      const r = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!r.ok) throw new Error("MET HTTP " + r.status);
+      const j = await r.json();
+      const ts = j && j.properties && j.properties.timeseries;
+      if (!Array.isArray(ts) || !ts.length) throw new Error("MET empty");
+
+      const get = (o, ...p) => p.reduce((a, k) => (a && a[k] != null ? a[k] : undefined), o);
+      const osloDate = (iso) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "Europe/Oslo" });
+      const osloHour = (iso) => parseInt(new Date(iso).toLocaleString("en-GB", { timeZone: "Europe/Oslo", hour12: false, hour: "2-digit" }).slice(0, 2), 10);
+
+      const days = {};
+      ts.forEach((e) => {
+        const date = osloDate(e.time);
+        const hr = osloHour(e.time);
+        const D = days[date] || (days[date] = { tmin: Infinity, tmax: -Infinity, wind: 0, gust: 0, psum: 0, pprob: null, sym: null, symDist: 99 });
+        const inst = get(e, "data", "instant", "details") || {};
+        if (typeof inst.air_temperature === "number") { D.tmin = Math.min(D.tmin, inst.air_temperature); D.tmax = Math.max(D.tmax, inst.air_temperature); }
+        if (typeof inst.wind_speed === "number") D.wind = Math.max(D.wind, inst.wind_speed * 3.6);
+        if (typeof inst.wind_speed_of_gust === "number") D.gust = Math.max(D.gust, inst.wind_speed_of_gust * 3.6);
+        // One forecast block per entry: hourly (next_1_hours) early on, 6-hourly later. Use
+        // whichever is present so precipitation totals never double-count.
+        const block = get(e, "data", "next_1_hours") || get(e, "data", "next_6_hours");
+        if (block) {
+          const pa = get(block, "details", "precipitation_amount");
+          if (typeof pa === "number") D.psum += pa;
+          const pp = get(block, "details", "probability_of_precipitation");
+          if (typeof pp === "number") D.pprob = Math.max(D.pprob == null ? 0 : D.pprob, pp);
+          const sym = get(block, "summary", "symbol_code");
+          const dist = Math.abs(hr - 12);   // prefer the symbol nearest local noon (the "daytime" icon)
+          if (sym && dist < D.symDist) { D.sym = sym; D.symDist = dist; }
+        }
       });
-      return `${base}?${params.toString()}`;
+
+      const byDate = {};
+      Object.keys(days).forEach((date) => {
+        const D = days[date];
+        const [icon, text] = metSymbol(D.sym);
+        byDate[date] = {
+          tmax: isFinite(D.tmax) ? D.tmax : null,
+          tmin: isFinite(D.tmin) ? D.tmin : null,
+          wind: D.wind || null,
+          gust: D.gust || null,
+          psum: Math.round(D.psum * 10) / 10,
+          pprob: D.pprob,
+          icon, text
+        };
+      });
+
+      // "Right now" snapshot — the first timeseries entry is the current hour.
+      const fi = get(ts[0], "data", "instant", "details") || {};
+      const nsym = get(ts[0], "data", "next_1_hours", "summary", "symbol_code") || get(ts[0], "data", "next_6_hours", "summary", "symbol_code");
+      const [nicon, ntext] = metSymbol(nsym);
+      const now = {
+        temp: typeof fi.air_temperature === "number" ? fi.air_temperature : null,
+        wind: typeof fi.wind_speed === "number" ? fi.wind_speed * 3.6 : null,
+        icon: nicon, text: ntext
+      };
+      return { byDate, now };
     }
 
     async function fetchWeather() {
       const stops = allStops();
       if (!stops.length) { setStatus("ok", "No stops to forecast yet."); return; }
 
-      const lats = stops.map((s) => s.lat);
-      const lons = stops.map((s) => s.lon);
-      const dates = stops.map((s) => s._date).sort();
-      const start = dates[0], end = dates[dates.length - 1];
+      setStatus("warn", "Fetching live forecast from Yr.no…");
 
-      setStatus("warn", "Fetching live forecast…");
+      const coordKey = (s) => s.lat.toFixed(4) + "," + s.lon.toFixed(4);
 
-      // Decide source: live forecast if within ~16 days, otherwise last-year archive.
-      const today = new Date();
-      const daysToStart = Math.round((new Date(start) - today) / 86400000);
-      const inForecastWindow = daysToStart <= 16 && daysToStart >= -3;
+      // Yr.no / MET Norway is the only source — one request per unique point, lightly throttled.
+      //  Each point yields both the live "now" reading and the daily forecast (Yr reaches ~9 days ahead).
+      const metPoints = new Map();
+      stops.forEach((s) => metPoints.set(coordKey(s), { lat: s.lat, lon: s.lon }));
+      const metData = new Map();
+      await Promise.all([...metPoints.values()].map((c) =>
+        metPool.add(() => fetchMetDaily(c.lat, c.lon))
+          .then((m) => metData.set(c.lat.toFixed(4) + "," + c.lon.toFixed(4), m))
+          .catch(() => {})
+      ));
 
-      let data, mode;
-      try {
-        if (inForecastWindow) {
-          data = await getJson(buildUrl("https://api.open-meteo.com/v1/forecast", lats, lons, start, end));
-          mode = "forecast";
-        } else {
-          throw new Error("outside forecast window");
-        }
-      } catch (e) {
-        // Fallback: same dates one year earlier from the historical archive
-        try {
-          const ly = (iso) => (parseInt(iso.slice(0, 4)) - 1) + iso.slice(4);
-          data = await getJson(buildUrl("https://archive-api.open-meteo.com/v1/archive", lats, lons, ly(start), ly(end)));
-          mode = "archive";
-        } catch (e2) {
-          setStatus("err", "Could not load weather. Check your internet connection and press “Refresh weather”.");
-          markAllError();
-          return;
-        }
+      // Current conditions show for every stop we could reach; the daily forecast shows for dates
+      //  inside Yr's ~9-day range. Dates beyond it have no real forecast anywhere, so we leave them
+      //  blank rather than fall back to a less reliable source.
+      let metCount = 0, beyond = 0;
+      stops.forEach((s) => {
+        const m = metData.get(coordKey(s));
+        s._now = m && m.now ? m.now : null;           // live "now" at this location, from Yr.no
+        const wx = m && m.byDate[s._date];
+        if (wx) { s._wx = wx; metCount++; }
+        else { s._wx = null; if (s._now) beyond++; }  // reached Yr but the date is past its horizon
+      });
+
+      repaintWeather();
+
+      if (metData.size === 0) {
+        setStatus("err", "Could not load weather from Yr.no. Check your internet connection and press “Refresh weather”.");
+        markAllError();
+        return;
       }
 
-      const series = Array.isArray(data) ? data : [data];
-      paint(series, mode);
-
       const when = new Date().toLocaleString();
-      if (mode === "forecast") setStatus("ok", `Live forecast loaded · updated ${when}`);
-      else setStatus("warn", `Trip date is beyond the live forecast range — showing last year's same-date readings as a seasonal estimate · updated ${when}`);
+      if (beyond) {
+        setStatus("ok", `Live Yr.no forecast loaded · ${beyond} stop${beyond > 1 ? "s" : ""} beyond Yr's ~9-day range show current conditions only · updated ${when}`);
+      } else {
+        setStatus("ok", `Live Yr.no forecast loaded · updated ${when}`);
+      }
     }
 
-    function paint(series, mode) {
-      // series is aligned 1:1 with the flattened stop request order
-      let cursor = 0;
+    // Push the weather now stored on each stop into the markers, the detail card and the day legend.
+    function repaintWeather() {
       TRIP.forEach((d) => {
         let lo = Infinity, hi = -Infinity;
-        // In archive (fallback) mode the dates come from one year earlier.
-        const targetDate = mode === "archive"
-          ? (parseInt(d.date.slice(0, 4)) - 1) + d.date.slice(4)
-          : d.date;
         const color = DAY_COLORS[(d.day - 1) % DAY_COLORS.length];
         d.stops.forEach((s) => {
-          const loc = series[cursor++];
-          if (!loc || !loc.daily || !loc.daily.time) return;
-          const di = loc.daily.time.indexOf(targetDate);
-          const idx = di >= 0 ? di : 0;
-          const dd = loc.daily;
-          const tmax = dd.temperature_2m_max[idx];
-          const tmin = dd.temperature_2m_min[idx];
-          const wind = dd.wind_speed_10m_max[idx];
-          const gust = dd.wind_gusts_10m_max ? dd.wind_gusts_10m_max[idx] : null;
-          const psum = dd.precipitation_sum ? dd.precipitation_sum[idx] : null;
-          const pprob = dd.precipitation_probability_max ? dd.precipitation_probability_max[idx] : null;
-          const [icon, text] = wmo(dd.weather_code[idx]);
-
-          if (tmin != null) lo = Math.min(lo, tmin);
-          if (tmax != null) hi = Math.max(hi, tmax);
-
-          // Stash weather on the stop and refresh its map popup
-          s._wx = { tmax, tmin, wind, gust, psum, pprob, icon, text };
+          const w = s._wx;
+          if (!w) return;
+          if (w.tmin != null) lo = Math.min(lo, w.tmin);
+          if (w.tmax != null) hi = Math.max(hi, w.tmax);
           if (s._marker) s._marker.setPopupContent(popupHtml(s, d, color));
           if (selected && selected.stop === s) showDetails(s, d, color);
         });
-
         const rng = document.getElementById(`rng-${d.day}`);
         if (rng && isFinite(lo)) rng.textContent = `${fmt(lo)}…${fmt(hi)}°C`;
       });
