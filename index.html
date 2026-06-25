@@ -12,6 +12,8 @@
   <link rel="preconnect" href="https://a.tile.openstreetmap.org" crossorigin />
   <link rel="preconnect" href="https://b.tile.openstreetmap.org" crossorigin />
   <link rel="preconnect" href="https://c.tile.openstreetmap.org" crossorigin />
+  <link rel="preconnect" href="https://nominatim.openstreetmap.org" crossorigin />
+  <link rel="preconnect" href="https://overpass-api.de" crossorigin />
   <script>
     // Clawpilot theme detection — runs before anything else
     (() => {
@@ -233,6 +235,15 @@
     .det-temps .desc { font-size: 0.86rem; color: var(--cp-text-muted); }
     .det-metrics { display: flex; gap: 20px; flex-wrap: wrap; font-size: 0.88rem; color: var(--cp-text-muted); }
     .det-metrics b { color: var(--cp-text); font-weight: 600; }
+    .det-near { margin-top: 16px; }
+    .near-title { font-size: 0.82rem; font-weight: 700; color: var(--cp-text); margin-bottom: 4px; }
+    .near-empty { font-size: 0.82rem; color: var(--cp-text-muted); font-style: italic; }
+    .near-item { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 12px; padding: 5px 0; border-top: 1px solid var(--cp-border); }
+    .near-name { color: var(--cp-text); font-weight: 600; font-size: 0.86rem; }
+    .near-meta { display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline; font-size: 0.78rem; color: var(--cp-text-muted); }
+    .near-hours { color: var(--cp-text-muted); }
+    .near-hours.dim { opacity: 0.55; }
+    .near-dist { color: var(--cp-text); font-weight: 600; }
 
     footer.note {
       margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--cp-border);
@@ -280,6 +291,17 @@
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
+
+    // Live place details come from OpenStreetMap — no API key required.
+    //   • Nominatim  → the locality / address line for each stop
+    //   • Overpass   → the actual mapped feature AT the stop + nearby food & grocery stores
+    const OVERPASS_ENDPOINTS = [
+      "https://overpass-api.de/api/interpreter",
+      "https://overpass.kumi.systems/api/interpreter",
+      "https://overpass.osm.ch/api/interpreter",
+      "https://overpass.private.coffee/api/interpreter"
+    ];
+    const OVERPASS_TIMEOUT_MS = 18000; // per-endpoint cap; a slow/throttled mirror falls through to the next
 
     // ---- Trip stops (destinations from the Nordkapp Google My Map, in travel order).
     //      day / date / title are filled in automatically from TRIP_START at boot. ----
@@ -408,9 +430,15 @@
     }
     function popupHtml(stop, day, color) {
       const w = stop._wx;
+      const g = stop._g;
       const loc = addrText(stop);
       const locHtml = loc ? `<div class="pop-loc">📍 ${loc}</div>` : "";
-      const descHtml = stop._desc ? `<div class="pop-desc">${clip(stop._desc.extract, 160)}</div>` : "";
+      const place = g && g.place ? g.place.type : null;
+      const descHtml = place
+        ? `<div class="pop-desc">${place}${g.place.name && g.place.name !== place ? " · " + g.place.name : ""}</div>`
+        : "";
+      const nearShop = g && g.shops && g.shops[0];
+      const gmLink = `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}`;
       const wx = !w
         ? `<div class="pop-sub">Loading weather…</div>`
         : `<div class="pop-wx">
@@ -418,23 +446,29 @@
              <span class="pt"><span class="hi">${fmt(w.tmax)}°</span> / <span class="lo">${fmt(w.tmin)}°</span>C — ${w.text}</span>
            </div>
            <div class="pop-sub">💨 ${fmt(w.wind)} km/h${w.gust != null ? ` (gust ${fmt(w.gust)})` : ""} · 🌧️ ${w.psum != null ? fmt(w.psum) : "—"} mm${w.pprob != null ? ` · ${fmt(w.pprob)}%` : ""}</div>`;
+      const shopHtml = nearShop ? `<div class="pop-sub">🛒 Nearest shop: ${nearShop.name} (${distLabel(nearShop.dist)})</div>` : "";
       return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${stop.name}</div>
-              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${locHtml}${descHtml}${wx}
-              <div class="pop-sub"><a href="https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}" target="_blank" rel="noopener">${stop.lat.toFixed(4)}, ${stop.lon.toFixed(4)} ↗ Google Maps</a></div>`;
+              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${locHtml}${descHtml}${wx}${shopHtml}
+              <div class="pop-sub"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>`;
     }
 
     // ---- Clicked-stop details panel (below the map) ----
     let selected = null;
     function detailsHtml(stop, day, color) {
       const w = stop._wx;
+      const g = stop._g;
+      const done = stop._gState === "done";
       let descBlock;
-      if (stop._desc) {
-        descBlock = `<div class="det-desc">${stop._desc.extract}${stop._desc.url ? ` <a href="${stop._desc.url}" target="_blank" rel="noopener">read more on Wikipedia ↗</a>` : ""}</div>`;
-      } else if (stop._descState === "done") {
-        descBlock = `<div class="det-desc det-muted">No place description available for this spot.</div>`;
+      if (g && g.place) {
+        descBlock = `<div class="det-desc"><b>${g.place.type}</b>${g.place.name && g.place.name !== g.place.type ? " · " + g.place.name : ""}</div>`;
+      } else if (done) {
+        descBlock = `<div class="det-desc det-muted">No specific mapped feature right at this point.</div>`;
       } else {
-        descBlock = `<div class="det-desc det-muted">ℹ️ Looking up place description…</div>`;
+        descBlock = `<div class="det-desc det-muted">ℹ️ Looking up this place on OpenStreetMap…</div>`;
       }
+      const loc = addrText(stop);
+      const locLine = loc ? `<div class="det-loc">📍 ${loc}</div>` : "";
+      const gmLink = `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}`;
       const wx = !w
         ? `<div class="det-sub" style="margin-top:12px">Loading weather…</div>`
         : `<div class="det-wx">
@@ -448,57 +482,35 @@
                <span>🌧️ <b>${w.psum != null ? fmt(w.psum) : "—"}</b> mm${w.pprob != null ? ` · <b>${fmt(w.pprob)}%</b> chance` : ""}</span>
              </div>
            </div>`;
+      const foodHtml = nearList("🍔 Food & restaurants nearby", g ? g.food : [], done, "None mapped within 15 km");
+      const shopsHtml = nearList("🛒 Grocery stores nearby", g ? g.shops : [], done, "None mapped within 15 km");
       return `<div class="det-head">
                 <span class="det-icon">${TYPE_ICON[stop.type] || "📍"}</span>
                 <div>
                   <div class="det-name">${stop.name}</div>
                   <div class="det-sub" style="color:${color}">${day.label} · ${day.title}</div>
-                  <div class="det-loc">📍 ${addrText(stop) || "Location not found"}</div>
-                  <div class="det-coords"><a href="https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}" target="_blank" rel="noopener">${stop.lat.toFixed(4)}, ${stop.lon.toFixed(4)} ↗ open in Google Maps</a></div>
+                  ${locLine}
+                  <div class="det-coords"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>
                 </div>
                 <span class="det-badge">${TYPE_LABEL[stop.type] || "Stop"}</span>
-              </div>${descBlock}${wx}`;
+              </div>${descBlock}${wx}${foodHtml}${shopsHtml}`;
     }
     function showDetails(stop, day, color) {
       selected = { stop, day, color };
       document.getElementById("details").innerHTML = detailsHtml(stop, day, color);
-      geocode(stop);
-      describe(stop);
+      loadPlace(stop);
     }
 
-    // ---- Reverse geocoding (OpenStreetMap Nominatim, on-demand per click) ----
+    // ---- Live place details from OpenStreetMap (on-demand per click) ----
+    //  • Nominatim reverse geocode  → the locality / address line
+    //  • Overpass                   → the actual mapped feature AT the stop
+    //                                 + nearby food, restaurants and grocery stores
+    const clip = (s, n) => (s && s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s);
     function addrText(stop) {
-      if (stop._addr) return stop._addr;
-      if (stop._addrState === "done") return null;
+      if (stop._g && stop._g.locality) return stop._g.locality;
+      if (stop._gState === "done") return null;
       return "Looking up location…";
     }
-    function formatAddr(d) {
-      if (!d) return null;
-      const a = d.address || {};
-      const place = d.name || a.tourism || a.attraction || a.hamlet || a.village ||
-                    a.town || a.city || a.road || a.suburb;
-      const parts = [];
-      if (place) parts.push(place);
-      [a.municipality || a.city_district || a.county, a.state, a.country].forEach((r) => {
-        if (r && !parts.includes(r)) parts.push(r);
-      });
-      return parts.length ? parts.join(", ") : (d.display_name || null);
-    }
-    async function geocode(stop) {
-      if (stop._addrState) return; // already loading or done
-      stop._addrState = "loading";
-      try {
-        const u = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&lat=${stop.lat}&lon=${stop.lon}`;
-        stop._addr = formatAddr(await getJson(u));
-      } catch {
-        stop._addr = null;
-      }
-      stop._addrState = "done";
-      refreshStop(stop);
-    }
-
-    // ---- Place description (Wikipedia REST summary, on-demand per click) ----
-    const clip = (s, n) => (s && s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s);
     function refreshStop(stop) {
       if (stop._marker && stop._day) stop._marker.setPopupContent(popupHtml(stop, stop._day, stop._color));
       if (selected && selected.stop === stop) {
@@ -511,42 +523,165 @@
       const s = Math.sin(dLat / 2) ** 2 + Math.cos(toR(a1)) * Math.cos(toR(a2)) * Math.sin(dLon / 2) ** 2;
       return 2 * R * Math.asin(Math.sqrt(s));
     }
-    async function wikiSummary(title) {
-      try {
-        const d = await getJson(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
-        if (!d || d.type === "disambiguation" || !d.extract) return null;
-        return {
-          title: d.title,
-          extract: d.extract,
-          url: d.content_urls && d.content_urls.desktop && d.content_urls.desktop.page,
-          lat: d.coordinates && d.coordinates.lat,
-          lon: d.coordinates && d.coordinates.lon
-        };
-      } catch { return null; }
+    function distLabel(d) {
+      if (d < 1) return Math.round(d * 1000) + " m";
+      return (d < 10 ? d.toFixed(1) : Math.round(d)) + " km";
     }
-    async function describe(stop) {
-      if (stop._descState) return; // already loading or done
-      stop._descState = "loading";
-      let found = null;
-      // 1) Search Wikipedia by place name; accept only if geographically close
-      try {
-        const s = await getJson(`https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&list=search&srlimit=1&srsearch=${encodeURIComponent(stop.name + " Norway")}`);
-        const hit = s && s.query && s.query.search && s.query.search[0];
-        if (hit) {
-          const sum = await wikiSummary(hit.title);
-          if (sum && (sum.lat == null || distKm(stop.lat, stop.lon, sum.lat, sum.lon) <= 30)) found = sum;
-        }
-      } catch {}
-      // 2) Fallback: nearest geotagged Wikipedia article to the coordinates
-      if (!found) {
-        try {
-          const g = await getJson(`https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&list=geosearch&gsradius=10000&gslimit=1&gscoord=${stop.lat}|${stop.lon}`);
-          const t = g && g.query && g.query.geosearch && g.query.geosearch[0];
-          if (t) found = await wikiSummary(t.title);
-        } catch {}
+    function hoursLabel(h) {
+      if (!h) return "";
+      if (h === "24/7") return "Open 24/7";
+      return h.replace(/;\s*/g, " · ");
+    }
+    function nearList(title, items, done, emptyMsg) {
+      if (!done && (!items || !items.length)) {
+        return `<div class="det-near"><div class="near-title">${title}</div><div class="near-empty">Searching…</div></div>`;
       }
-      stop._desc = found;
-      stop._descState = "done";
+      if (!items || !items.length) {
+        return `<div class="det-near"><div class="near-title">${title}</div><div class="near-empty">${emptyMsg}</div></div>`;
+      }
+      const rows = items.map((x) =>
+        `<div class="near-item"><span class="near-name">${x.icon} ${x.name}</span>` +
+        `<span class="near-meta">${x.hours ? `<span class="near-hours">⏰ ${hoursLabel(x.hours)}</span>` : `<span class="near-hours dim">hours n/a</span>`}` +
+        `<span class="near-dist">${distLabel(x.dist)}</span></span></div>`
+      ).join("");
+      return `<div class="det-near"><div class="near-title">${title}</div>${rows}</div>`;
+    }
+
+    const OSM_LABELS = {
+      "tourism:camp_site": "Campsite", "tourism:caravan_site": "Caravan site", "tourism:hotel": "Hotel",
+      "tourism:guest_house": "Guesthouse", "tourism:hostel": "Hostel", "tourism:motel": "Motel",
+      "tourism:chalet": "Cabins", "tourism:apartment": "Apartments", "tourism:alpine_hut": "Mountain lodge",
+      "tourism:wilderness_hut": "Wilderness hut", "tourism:attraction": "Attraction", "tourism:viewpoint": "Viewpoint",
+      "tourism:museum": "Museum", "tourism:information": "Tourist info", "tourism:artwork": "Artwork",
+      "tourism:picnic_site": "Picnic site", "tourism:gallery": "Gallery", "tourism:theme_park": "Theme park",
+      "tourism:zoo": "Zoo", "tourism:aquarium": "Aquarium",
+      "leisure:garden": "Garden", "leisure:park": "Park", "leisure:nature_reserve": "Nature reserve",
+      "leisure:marina": "Marina", "leisure:beach_resort": "Beach resort", "leisure:sports_centre": "Sports centre",
+      "historic:memorial": "Memorial", "historic:monument": "Monument", "historic:ruins": "Ruins",
+      "historic:church": "Historic church", "historic:castle": "Castle", "historic:archaeological_site": "Archaeological site",
+      "natural:peak": "Mountain peak", "natural:bay": "Bay", "natural:beach": "Beach", "natural:water": "Lake / water",
+      "natural:fjord": "Fjord", "natural:glacier": "Glacier", "natural:waterfall": "Waterfall", "natural:cape": "Cape",
+      "natural:cliff": "Cliff", "natural:wood": "Forest", "natural:wetland": "Wetland",
+      "amenity:charging_station": "EV charging station", "amenity:fuel": "Petrol station", "amenity:parking": "Parking",
+      "amenity:cafe": "Café", "amenity:restaurant": "Restaurant", "amenity:fast_food": "Fast food",
+      "amenity:place_of_worship": "Place of worship"
+    };
+    function friendlyType(k, v) {
+      return OSM_LABELS[k + ":" + v] || (v ? v.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) : k);
+    }
+    function foodIcon(t) {
+      const n = (t.name || "").toLowerCase();
+      if (n.includes("mcdonald")) return "🍟";
+      if (n.includes("burger king")) return "🍔";
+      if (n.includes("starbucks") || t.amenity === "cafe") return "☕";
+      if (/pizza/.test((t.cuisine || "") + n)) return "🍕";
+      if (t.amenity === "fast_food") return "🍔";
+      return "🍽️";
+    }
+    function formatLocality(d) {
+      if (!d) return null;
+      const a = d.address || {};
+      const parts = [];
+      const place = a.hamlet || a.village || a.town || a.city || a.suburb ||
+                    a.locality || a.neighbourhood || a.farm;
+      if (place) parts.push(place);
+      [a.municipality || a.county, a.state].forEach((r) => { if (r && !parts.includes(r)) parts.push(r); });
+      if (!parts.length && d.display_name) return d.display_name.split(",").slice(0, 2).join(", ").trim();
+      return parts.length ? parts.join(", ") : null;
+    }
+    function osmCoord(e) {
+      if (e.lat != null) return [e.lat, e.lon];
+      if (e.center) return [e.center.lat, e.center.lon];
+      return null;
+    }
+    function overpassQuery(lat, lon) {
+      return `[out:json][timeout:25];(` +
+        `nwr(around:500,${lat},${lon})[tourism];` +
+        `nwr(around:500,${lat},${lon})[leisure];` +
+        `nwr(around:500,${lat},${lon})[historic];` +
+        `nwr(around:700,${lat},${lon})[natural][name];` +
+        `nwr(around:15000,${lat},${lon})[amenity~"^(fast_food|restaurant|cafe)$"][name];` +
+        `nwr(around:15000,${lat},${lon})[shop~"^(supermarket|convenience|greengrocer|general)$"][name];` +
+        `);out tags center;`;
+    }
+    async function overpass(lat, lon) {
+      const body = "data=" + encodeURIComponent(overpassQuery(lat, lon));
+      let lastErr;
+      for (const ep of OVERPASS_ENDPOINTS) {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), OVERPASS_TIMEOUT_MS);
+        try {
+          const r = await fetch(ep, {
+            method: "POST", body, signal: ctl.signal,
+            headers: { "Content-Type": "application/x-www-form-urlencoded" }
+          });
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return await r.json();
+        } catch (e) {
+          lastErr = e; // throttled / slow / CORS — try the next mirror
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      throw lastErr || new Error("Overpass unavailable");
+    }
+    function dedupe(arr) {
+      const seen = new Set(), out = [];
+      for (const x of arr) {
+        const k = x.name.toLowerCase() + "@" + x.dist.toFixed(1);
+        if (seen.has(k)) continue;
+        seen.add(k); out.push(x);
+      }
+      return out;
+    }
+    function parseOverpass(stop, g, data) {
+      const els = (data && data.elements) || [];
+      const FOOD = ["fast_food", "restaurant", "cafe"];
+      const SHOP = ["supermarket", "convenience", "greengrocer", "general"];
+      const PRIO = { tourism: 0, leisure: 1, historic: 2, natural: 3 };
+      let bestPoi = null, bestScore = 1e9;
+      const food = [], shops = [];
+      for (const e of els) {
+        const t = e.tags || {};
+        if (!t.name) continue;
+        const c = osmCoord(e);
+        if (!c) continue;
+        const d = distKm(stop.lat, stop.lon, c[0], c[1]);
+        let pk = null;
+        for (const k of ["tourism", "leisure", "historic", "natural"]) { if (t[k]) { pk = k; break; } }
+        if (pk && d <= 0.7) {
+          const score = PRIO[pk] * 5 + d;
+          if (score < bestScore) { bestScore = score; bestPoi = { name: t.name, type: friendlyType(pk, t[pk]) }; }
+        }
+        if (FOOD.includes(t.amenity)) food.push({ name: t.name, icon: foodIcon(t), hours: t.opening_hours || "", dist: d });
+        if (SHOP.includes(t.shop)) shops.push({ name: t.name, icon: "🛒", hours: t.opening_hours || "", dist: d });
+      }
+      food.sort((a, b) => a.dist - b.dist);
+      shops.sort((a, b) => a.dist - b.dist);
+      g.place = bestPoi;
+      g.food = dedupe(food).slice(0, 6);
+      g.shops = dedupe(shops).slice(0, 6);
+    }
+    async function loadPlace(stop) {
+      if (stop._gState) return; // already loading or done
+      stop._gState = "loading";
+      const g = stop._g = { place: null, locality: null, food: [], shops: [] };
+      const jobs = [];
+      jobs.push((async () => {
+        try {
+          const d = await getJson(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&lat=${stop.lat}&lon=${stop.lon}`);
+          g.locality = formatLocality(d);
+        } catch {}
+        refreshStop(stop);
+      })());
+      jobs.push((async () => {
+        try {
+          parseOverpass(stop, g, await overpass(stop.lat, stop.lon));
+        } catch {}
+        refreshStop(stop);
+      })());
+      await Promise.allSettled(jobs);
+      stop._gState = "done";
       refreshStop(stop);
     }
     function renderMap() {
