@@ -358,9 +358,11 @@
     ];
     const KML_TIMEOUT_MS = 12000;
 
-    // Live place details come from OpenStreetMap — no API key required.
+    // Live place details come from OpenStreetMap — no API key required, ever.
     //   • Nominatim  → the locality / address line for each stop
-    //   • Overpass   → the actual mapped feature AT the stop + nearby food & grocery stores
+    //   • Overpass   → the mapped feature AT the stop + nearby food / shops / fuel
+    //   • Photon (komoot) → a second, independent keyless OSM provider, raced
+    //     against Overpass so a busy mirror never leaves the card empty.
     const OVERPASS_ENDPOINTS = [
       "https://overpass-api.de/api/interpreter",
       "https://overpass.kumi.systems/api/interpreter",
@@ -372,17 +374,18 @@
     const OVERPASS_TIMEOUT_MS = 7000; // per-endpoint cap — drop a slow/dead mirror fast and try the next
 
     // ---- Nearby-place performance layer -------------------------------------
-    //  The public OpenStreetMap services (Overpass + Nominatim) are shared and
-    //  heavily rate-limited, so firing a fresh query on every click triggers
-    //  HTTP 429 and long stalls. Three things keep it fast AND friendly:
-    //   1) localStorage cache — results we fetch live are kept per browser for 30
-    //      days (POIs barely change), so revisits/clicks are instant, no network.
-    //   2) small concurrency pools — a few Overpass requests run in parallel across
-    //      rotating mirrors, so one slow/dead mirror can't stall everything, while
-    //      Nominatim stays gentle. This (plus mirror cooldown) is what kills 429s.
-    //   3) mirror rotation + cooldown — a 429/timeout parks that mirror for a
-    //      minute and we move straight on to the next one.
-    const POI_CACHE_PREFIX = "np_poi_v2_";
+    //  The public OpenStreetMap services are shared and rate-limited, so naive
+    //  per-click queries trigger HTTP 429 and long stalls. Four things keep the
+    //  card fast AND keyless:
+    //   1) localStorage cache — every live result is kept per browser for 30 days
+    //      (POIs barely change), so revisits/clicks are instant, zero network.
+    //   2) two independent providers — Overpass and Photon are raced in parallel
+    //      (see loadNearby) with a hard 5 s budget; whichever answers first wins.
+    //   3) small concurrency pools — a few requests run in parallel across
+    //      rotating mirrors, so one slow/dead mirror can't stall everything.
+    //   4) mirror rotation + cooldown — a 429/timeout parks that mirror for a
+    //      minute and we move straight on to the next one (or to Photon / a proxy).
+    const POI_CACHE_PREFIX = "np_poi_v3_";
     const POI_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — POIs are quasi-static
     const OP_COOLDOWN_MS = 60000;                // park a throttled mirror this long
     function poiKey(lat, lon) { return POI_CACHE_PREFIX + (+lat).toFixed(4) + "_" + (+lon).toFixed(4); }
@@ -392,13 +395,15 @@
         if (!raw) return null;
         const o = JSON.parse(raw);
         if (!o || !o.ts) return null;
-        return { data: o, fresh: (Date.now() - o.ts) < POI_TTL_MS };
+        // A "partial" entry (POI providers failed last time) is shown instantly but
+        // never treated as fresh, so it gets revalidated on the next visit / click.
+        return { data: o, fresh: !o.partial && (Date.now() - o.ts) < POI_TTL_MS };
       } catch { return null; }
     }
-    function poiCacheSet(lat, lon, g) {
+    function poiCacheSet(lat, lon, g, partial) {
       try {
         localStorage.setItem(poiKey(lat, lon), JSON.stringify({
-          ts: Date.now(), place: g.place, locality: g.locality,
+          ts: Date.now(), partial: !!partial, place: g.place, locality: g.locality,
           food: g.food, shops: g.shops, fuel: g.fuel
         }));
       } catch {}
@@ -446,7 +451,7 @@
         }
       };
     }
-    const opPool = makePool(3, 180);   // Overpass: up to 3 in flight, slight stagger
+    const opPool = makePool(2, 400);   // POI providers: 2 in flight, gentle stagger (keeps Photon under its CORS throttle)
     const nomPool = makePool(1, 1100); // Nominatim: one at a time, ~1 req/s
     function bumpStop(stop) { opPool.bump(stop); nomPool.bump(stop); }
 
@@ -932,7 +937,7 @@
       (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
       (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`
     ];
-    async function overpassFetch(url, init) {
+    async function fetchJsonTimed(url, init) {
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), OVERPASS_TIMEOUT_MS);
       try {
@@ -954,7 +959,7 @@
         const ep = eps[(start + i) % n];
         if (_opCooldown[ep] && Date.now() < _opCooldown[ep]) continue; // parked mirror — skip
         try {
-          return await overpassFetch(ep, { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+          return await fetchJsonTimed(ep, { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded" } });
         } catch (e) {
           lastErr = e;
           if (e.status === 429 || e.status === 503 || e.status === 504) _opCooldown[ep] = Date.now() + OP_COOLDOWN_MS;
@@ -963,9 +968,31 @@
       // 2) Keyless fallback — same query through a CORS proxy (different egress IP).
       const getUrl = eps[start] + "?data=" + encodeURIComponent(q);
       for (const wrap of OVERPASS_PROXIES) {
-        try { return await overpassFetch(wrap(getUrl)); } catch (e) { lastErr = e; }
+        try { return await fetchJsonTimed(wrap(getUrl)); } catch (e) { lastErr = e; }
       }
       throw lastErr || new Error("Overpass busy");
+    }
+    // Photon (komoot) — a second, fully keyless OSM provider on separate
+    // infrastructure from Overpass. Its reverse endpoint returns nearby named
+    // features filtered by OSM tag, so when Overpass is busy this still fills the
+    // card. (It carries fewer extra tags, e.g. no opening-hours, which is fine.)
+    const PHOTON_TAGS = [
+      "amenity:restaurant", "amenity:fast_food", "amenity:cafe",
+      "shop:supermarket", "shop:convenience", "shop:greengrocer", "shop:general",
+      "amenity:fuel", "tourism", "historic", "leisure"
+    ].map((t) => "osm_tag=" + encodeURIComponent(t)).join("&");
+    async function photon(lat, lon) {
+      const url = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lon}&radius=9&limit=50&${PHOTON_TAGS}`;
+      try {
+        return await fetchJsonTimed(url); // direct — fast when not throttled
+      } catch (e) {
+        // Under load komoot drops the CORS header; a proxy re-adds it AND fetches
+        // from a different IP, so this keyless fallback still returns the data.
+        for (const wrap of OVERPASS_PROXIES) {
+          try { return await fetchJsonTimed(wrap(url)); } catch {}
+        }
+        throw e;
+      }
     }
     function dedupe(arr) {
       const seen = new Set(), out = [];
@@ -1007,10 +1034,70 @@
       g.shops = dedupe(shops).slice(0, 3);
       g.fuel = dedupe(fuel).slice(0, 3);
     }
+    // Map Photon's GeoJSON into the same shape as parseOverpass, reusing the same
+    // icon / friendly-type helpers against each feature's osm_key / osm_value. The
+    // POI name carries the brand, so the fuel coffee/toilet heuristics still work.
+    function parsePhoton(stop, g, data) {
+      const feats = (data && data.features) || [];
+      const FOOD = { restaurant: 1, fast_food: 1, cafe: 1 };
+      const SHOP = { supermarket: 1, convenience: 1, greengrocer: 1, general: 1 };
+      const PRIO = { tourism: 0, leisure: 1, historic: 2, natural: 3 };
+      let bestPoi = null, bestScore = 1e9;
+      const food = [], shops = [], fuel = [];
+      for (const f of feats) {
+        const p = f.properties || {};
+        const name = p.name;
+        const co = (f.geometry && f.geometry.coordinates) || null;
+        if (!name || !co) continue;
+        const d = distKm(stop.lat, stop.lon, co[1], co[0]); // Photon coords are [lon, lat]
+        const key = p.osm_key, val = p.osm_value;
+        if (PRIO[key] != null && d <= 0.7) {
+          const score = PRIO[key] * 5 + d;
+          if (score < bestScore) { bestScore = score; bestPoi = { name, type: friendlyType(key, val) }; }
+        }
+        if (key === "amenity" && FOOD[val] && d <= 5) food.push({ name, icon: foodIcon({ amenity: val, name }), hours: "", dist: d });
+        else if (key === "shop" && SHOP[val] && d <= 5) shops.push({ name, icon: "🛒", hours: "", dist: d });
+        else if (key === "amenity" && val === "fuel" && d <= 9) fuel.push({ name, icon: "⛽", hours: "", dist: d, coffee: fuelHasCoffee({ name }), toilet: fuelHasToilet({ name }) });
+      }
+      food.sort((a, b) => a.dist - b.dist);
+      shops.sort((a, b) => a.dist - b.dist);
+      fuel.sort((a, b) => a.dist - b.dist);
+      g.place = bestPoi;
+      g.food = dedupe(food).slice(0, 3);
+      g.shops = dedupe(shops).slice(0, 3);
+      g.fuel = dedupe(fuel).slice(0, 3);
+    }
+    function gHasNearby(g) {
+      return !!(g && (g.place || (g.food && g.food.length) ||
+        (g.shops && g.shops.length) || (g.fuel && g.fuel.length)));
+    }
+    // One keyless path for every stop: hit Overpass and Photon in parallel and
+    // keep whichever independent provider returns usable data first. If one is
+    // throttled the other still answers, and the race is capped at 5 s so a click
+    // is never left waiting — the localStorage cache then makes repeats instant.
+    async function loadNearby(stop, g) {
+      const NEARBY_BUDGET_MS = 5000;
+      let responded = false; // did at least one provider actually return an answer?
+      const run = (fetcher, parser) => fetcher(stop.lat, stop.lon).then(
+        (d) => { responded = true; const t = {}; parser(stop, t, d); return t; },
+        () => null
+      );
+      const op = run(overpass, parseOverpass);
+      const ph = run(photon, parsePhoton);
+      const timeout = new Promise((r) => setTimeout(() => r("TIMEOUT"), NEARBY_BUDGET_MS));
+      const winner = await Promise.race([
+        (async () => { const t = await ph; return gHasNearby(t) ? t : await op; })(),
+        (async () => { const t = await op; return gHasNearby(t) ? t : await ph; })(),
+        timeout
+      ]);
+      const chosen = (winner && winner !== "TIMEOUT" && gHasNearby(winner)) ? winner : null;
+      if (chosen) { g.place = chosen.place; g.food = chosen.food; g.shops = chosen.shops; g.fuel = chosen.fuel; }
+      return responded; // false ⇒ everything failed; caller keeps the entry revalidatable
+    }
     async function loadPlace(stop, opts) {
       opts = opts || {};
       if (stop._gState === "loading") { if (opts.priority) bumpStop(stop); return; }
-      if (stop._gState === "done") return;
+      if (stop._gState === "done" && !stop._poiPartial) return;
 
       // 1) Serve instantly from the persistent cache — stops are fixed and POIs
       //    barely change, so this is zero-network and avoids the rate limits.
@@ -1022,9 +1109,11 @@
           food: c.food || [], shops: c.shops || [], fuel: c.fuel || []
         };
         stop._gState = "done";
+        stop._poiPartial = !!c.partial; // a partial entry stays revalidatable
         refreshStop(stop);
         if (cached.fresh || opts.noRevalidate) return; // fresh enough — done
-        // stale: keep the shown data and quietly refresh it through the queue below
+        // stale/partial: keep the shown data and quietly refresh through the queue below
+        stop._gState = "loading";
       } else {
         stop._gState = "loading";
         stop._g = { place: null, locality: null, food: [], shops: [], fuel: [] };
@@ -1043,15 +1132,19 @@
         }, stop, pri));
       }
       jobs.push(opPool.add(async () => {
-        try { parseOverpass(stop, g, await overpass(stop.lat, stop.lon)); } catch {}
+        try { g._poiOk = await loadNearby(stop, g); } catch { g._poiOk = false; }
         refreshStop(stop);
       }, stop, pri));
 
       await Promise.allSettled(jobs);
       stop._gState = "done";
-      // Persist only a real result — never cache an empty failure as if it were final.
-      if (g.locality || g.place || (g.food && g.food.length) || (g.shops && g.shops.length) || (g.fuel && g.fuel.length)) {
-        poiCacheSet(stop.lat, stop.lon, g);
+      const poiOk = g._poiOk === true;
+      stop._poiPartial = !poiOk; // POIs unconfirmed ⇒ let a later click/visit revalidate
+      // Persist whenever we have *something*; mark the entry partial when the POI
+      // providers failed, so it is revalidated next time instead of being trusted
+      // as a final "nothing nearby".
+      if (g.locality || gHasNearby(g)) {
+        poiCacheSet(stop.lat, stop.lon, g, !poiOk);
       }
       refreshStop(stop);
     }
