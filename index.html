@@ -765,13 +765,18 @@
         iconSize: [28, 40], iconAnchor: [14, 40], popupAnchor: [0, -36]
       });
     }
-    // Build a Google Maps link that opens the EXACT location of the stop. Searching
-    // by *name* (e.g. "Tesla Supercharger - Mosjøen") makes Google return a list of
-    // ambiguous matches instead of the one place we mean, so we always query the
-    // stop's precise coordinates. `query=lat,lon` drops a pin exactly on our KML
-    // point — and when Google knows a POI at that spot it still surfaces its card.
+    // Build a Google Maps link for a stop. Two keyless forms each fail on their own:
+    // a bare coordinate (`query=lat,lon`) drops an UNNAMED pin — and our hand-placed
+    // KML points often sit tens-to-hundreds of metres off Google's POI centroid, so
+    // it lands on empty ground; a bare name returns an ambiguous list that can even
+    // centre on the wrong region. Passing the name AND the exact coordinate together
+    // lets Google rank the correct nearby place FIRST, surfaced with its real card
+    // (name, rating, opening hours, address) — the best a key-less link can do.
     function gmapsLink(stop) {
-      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${stop.lat},${stop.lon}`)}`;
+      const name = (stop.name || "").trim();
+      const coords = `${stop.lat},${stop.lon}`;
+      const query = name ? `${name} ${coords}` : coords;
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
     }
     function popupHtml(stop, day, color) {
       const w = stop._wx;
