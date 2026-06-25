@@ -754,6 +754,8 @@
       const loc = addrText(stop);
       const locHtml = loc ? `<div class="pop-loc">${loc}</div>` : "";
       const gmLink = gmapsLink(stop);
+      const drive = driveLine(stop, day);
+      const driveHtml = drive ? `<div class="pop-sub">${drive}</div>` : "";
       const wx = w
         ? `<div class="pop-wx">
              <span class="pi">${w.icon}</span>
@@ -765,7 +767,7 @@
             ? `<div class="pop-sub">Weather unavailable</div>`
             : `<div class="pop-sub">Loading weather…</div>`;
       return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${stop.name}</div>
-              <div class="pop-day" style="color:${color}">${day.label} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${locHtml}${wx}
+              <div class="pop-day" style="color:${color}">${day.label} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${driveHtml}${locHtml}${wx}
               <div class="pop-sub"><a href="${gmLink}" target="_blank" rel="noopener">Open in Google Maps ↗</a></div>`;
     }
 
