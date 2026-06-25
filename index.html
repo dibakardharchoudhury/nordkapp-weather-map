@@ -761,6 +761,15 @@
         iconSize: [28, 40], iconAnchor: [14, 40], popupAnchor: [0, -36]
       });
     }
+    // Build a Google Maps link that resolves the *named* place (e.g. "Arctic Circle
+    // Center" or a specific Tesla Supercharger) by searching for the stop's name
+    // biased to its exact coordinates — instead of dropping a nameless pin.
+    function gmapsLink(stop) {
+      const coords = `${stop.lat},${stop.lon}`;
+      const name = (stop.name || "").trim();
+      const query = name ? `${name} ${coords}` : coords;
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+    }
     function popupHtml(stop, day, color) {
       const w = stop._wx;
       const g = stop._g;
@@ -771,7 +780,7 @@
         ? `<div class="pop-desc">${place}${g.place.name && g.place.name !== place ? " · " + g.place.name : ""}</div>`
         : "";
       const nearShop = g && g.shops && g.shops[0];
-      const gmLink = `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}`;
+      const gmLink = gmapsLink(stop);
       const wx = !w
         ? `<div class="pop-sub">Loading weather…</div>`
         : `<div class="pop-wx">
@@ -803,7 +812,7 @@
       }
       const loc = addrText(stop);
       const locLine = loc ? `<div class="det-loc">📍 ${loc}</div>` : "";
-      const gmLink = `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}`;
+      const gmLink = gmapsLink(stop);
       const wx = !w
         ? `<div class="det-sub" style="margin-top:12px">Loading weather…</div>`
         : `<div class="det-wx">
