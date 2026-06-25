@@ -204,6 +204,7 @@
     .pop-wx .pt .lo { color: #0078d4; } .pop-wx .pt .hi { color: #dc2626; }
     .pop-sub { font-size: 0.76rem; color: #555; margin-top: 4px; }
     .pop-loc { font-size: 0.78rem; color: #1f2937; margin-top: 4px; font-weight: 600; }
+    .pop-desc { font-size: 0.76rem; color: #374151; margin-top: 5px; line-height: 1.4; }
     .legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--cp-border); font-size: 0.8rem; color: var(--cp-text-muted); }
     .legend .lg { display: inline-flex; align-items: center; gap: 6px; }
     .legend .sw { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1px var(--cp-border); }
@@ -217,6 +218,10 @@
     .det-sub { font-size: 0.78rem; color: var(--cp-text-muted); text-transform: uppercase; letter-spacing: .03em; margin-top: 2px; font-weight: 600; }
     .det-loc { font-size: 0.9rem; color: var(--cp-text); margin-top: 5px; font-weight: 600; }
     .det-coords { margin-top: 3px; }
+    .det-desc { font-size: 0.92rem; color: var(--cp-text); margin-top: 12px; line-height: 1.55; }
+    .det-desc.det-muted { color: var(--cp-text-muted); font-style: italic; }
+    .det-desc a { color: var(--cp-link); text-decoration: none; }
+    .det-desc a:hover { text-decoration: underline; }
     .det-coords a { color: var(--cp-link); text-decoration: none; font-size: 0.8rem; }
     .det-coords a:hover { text-decoration: underline; }
     .det-badge { margin-left: auto; align-self: flex-start; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 3px 10px; border-radius: 999px; background: var(--cp-accent-soft); color: var(--cp-accent); white-space: nowrap; }
@@ -405,6 +410,7 @@
       const w = stop._wx;
       const loc = addrText(stop);
       const locHtml = loc ? `<div class="pop-loc">📍 ${loc}</div>` : "";
+      const descHtml = stop._desc ? `<div class="pop-desc">${clip(stop._desc.extract, 160)}</div>` : "";
       const wx = !w
         ? `<div class="pop-sub">Loading weather…</div>`
         : `<div class="pop-wx">
@@ -413,7 +419,7 @@
            </div>
            <div class="pop-sub">💨 ${fmt(w.wind)} km/h${w.gust != null ? ` (gust ${fmt(w.gust)})` : ""} · 🌧️ ${w.psum != null ? fmt(w.psum) : "—"} mm${w.pprob != null ? ` · ${fmt(w.pprob)}%` : ""}</div>`;
       return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${stop.name}</div>
-              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${locHtml}${wx}
+              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${locHtml}${descHtml}${wx}
               <div class="pop-sub"><a href="https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}" target="_blank" rel="noopener">${stop.lat.toFixed(4)}, ${stop.lon.toFixed(4)} ↗ Google Maps</a></div>`;
     }
 
@@ -421,6 +427,14 @@
     let selected = null;
     function detailsHtml(stop, day, color) {
       const w = stop._wx;
+      let descBlock;
+      if (stop._desc) {
+        descBlock = `<div class="det-desc">${stop._desc.extract}${stop._desc.url ? ` <a href="${stop._desc.url}" target="_blank" rel="noopener">read more on Wikipedia ↗</a>` : ""}</div>`;
+      } else if (stop._descState === "done") {
+        descBlock = `<div class="det-desc det-muted">No place description available for this spot.</div>`;
+      } else {
+        descBlock = `<div class="det-desc det-muted">ℹ️ Looking up place description…</div>`;
+      }
       const wx = !w
         ? `<div class="det-sub" style="margin-top:12px">Loading weather…</div>`
         : `<div class="det-wx">
@@ -443,12 +457,13 @@
                   <div class="det-coords"><a href="https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lon}" target="_blank" rel="noopener">${stop.lat.toFixed(4)}, ${stop.lon.toFixed(4)} ↗ open in Google Maps</a></div>
                 </div>
                 <span class="det-badge">${TYPE_LABEL[stop.type] || "Stop"}</span>
-              </div>${wx}`;
+              </div>${descBlock}${wx}`;
     }
     function showDetails(stop, day, color) {
       selected = { stop, day, color };
       document.getElementById("details").innerHTML = detailsHtml(stop, day, color);
       geocode(stop);
+      describe(stop);
     }
 
     // ---- Reverse geocoding (OpenStreetMap Nominatim, on-demand per click) ----
@@ -479,10 +494,60 @@
         stop._addr = null;
       }
       stop._addrState = "done";
+      refreshStop(stop);
+    }
+
+    // ---- Place description (Wikipedia REST summary, on-demand per click) ----
+    const clip = (s, n) => (s && s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s);
+    function refreshStop(stop) {
       if (stop._marker && stop._day) stop._marker.setPopupContent(popupHtml(stop, stop._day, stop._color));
       if (selected && selected.stop === stop) {
         document.getElementById("details").innerHTML = detailsHtml(stop, selected.day, selected.color);
       }
+    }
+    function distKm(a1, o1, a2, o2) {
+      const R = 6371, toR = (x) => x * Math.PI / 180;
+      const dLat = toR(a2 - a1), dLon = toR(o2 - o1);
+      const s = Math.sin(dLat / 2) ** 2 + Math.cos(toR(a1)) * Math.cos(toR(a2)) * Math.sin(dLon / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(s));
+    }
+    async function wikiSummary(title) {
+      try {
+        const d = await getJson(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
+        if (!d || d.type === "disambiguation" || !d.extract) return null;
+        return {
+          title: d.title,
+          extract: d.extract,
+          url: d.content_urls && d.content_urls.desktop && d.content_urls.desktop.page,
+          lat: d.coordinates && d.coordinates.lat,
+          lon: d.coordinates && d.coordinates.lon
+        };
+      } catch { return null; }
+    }
+    async function describe(stop) {
+      if (stop._descState) return; // already loading or done
+      stop._descState = "loading";
+      let found = null;
+      // 1) Search Wikipedia by place name; accept only if geographically close
+      try {
+        const s = await getJson(`https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&list=search&srlimit=1&srsearch=${encodeURIComponent(stop.name + " Norway")}`);
+        const hit = s && s.query && s.query.search && s.query.search[0];
+        if (hit) {
+          const sum = await wikiSummary(hit.title);
+          if (sum && (sum.lat == null || distKm(stop.lat, stop.lon, sum.lat, sum.lon) <= 30)) found = sum;
+        }
+      } catch {}
+      // 2) Fallback: nearest geotagged Wikipedia article to the coordinates
+      if (!found) {
+        try {
+          const g = await getJson(`https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&list=geosearch&gsradius=10000&gslimit=1&gscoord=${stop.lat}|${stop.lon}`);
+          const t = g && g.query && g.query.geosearch && g.query.geosearch[0];
+          if (t) found = await wikiSummary(t.title);
+        } catch {}
+      }
+      stop._desc = found;
+      stop._descState = "done";
+      refreshStop(stop);
     }
     function renderMap() {
       if (!map) return;
