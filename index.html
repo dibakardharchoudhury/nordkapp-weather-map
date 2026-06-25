@@ -425,7 +425,7 @@
     //      rotating mirrors, so one slow/dead mirror can't stall everything.
     //   4) mirror rotation + cooldown — a 429/timeout parks that mirror for a
     //      minute and we move straight on to the next one (or to Photon / a proxy).
-    const POI_CACHE_PREFIX = "np_poi_v9_";
+    const POI_CACHE_PREFIX = "np_poi_v10_";
     const POI_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — POIs are quasi-static
     const OP_COOLDOWN_MS = 60000;                // park a throttled mirror this long
     function poiKey(lat, lon) { return POI_CACHE_PREFIX + (+lat).toFixed(4) + "_" + (+lon).toFixed(4); }
@@ -765,18 +765,13 @@
         iconSize: [28, 40], iconAnchor: [14, 40], popupAnchor: [0, -36]
       });
     }
-    // Build a Google Maps link that resolves the named place AND pulls up its details
-    // card. Google needs the *name* in the query to surface a place card (a bare
-    // coordinate just drops an unnamed pin, because our hand-placed KML points rarely
-    // sit exactly on Google's POI centroid). We search for the name with the map
-    // centred on the stop's exact coordinates (`/@lat,lon,16z`) so the correct nearby
-    // place is the one Google highlights — even for generic names like "Stoppeplass".
+    // Build a Google Maps link that opens the EXACT location of the stop. Searching
+    // by *name* (e.g. "Tesla Supercharger - Mosjøen") makes Google return a list of
+    // ambiguous matches instead of the one place we mean, so we always query the
+    // stop's precise coordinates. `query=lat,lon` drops a pin exactly on our KML
+    // point — and when Google knows a POI at that spot it still surfaces its card.
     function gmapsLink(stop) {
-      const name = (stop.name || "").trim();
-      if (!name) {
-        return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${stop.lat},${stop.lon}`)}`;
-      }
-      return `https://www.google.com/maps/search/${encodeURIComponent(name)}/@${stop.lat},${stop.lon},16z`;
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${stop.lat},${stop.lon}`)}`;
     }
     function popupHtml(stop, day, color) {
       const w = stop._wx;
@@ -1236,10 +1231,10 @@
     async function enrichNominatim(stop, g, pri) {
       const items = [].concat(g.food || [], g.shops || [], g.fuel || []);
       const ids = [...new Set(items.map((x) => x.oid).filter(Boolean))];
-      if (!ids.length) return false;
+      if (!ids.length) return { ok: true, changed: false };
       let map;
       try { map = await nomPool.add(() => nominatimLookup(ids), stop, !!pri); }
-      catch { return false; }
+      catch { return { ok: false, changed: false }; } // network/rate-limit fail → keep partial
       const fuelSet = new Set(g.fuel || []);
       let changed = false;
       for (const x of items) {
@@ -1251,7 +1246,7 @@
           if (!x.toilet && fuelHasToilet(ex)) { x.toilet = true; changed = true; }
         }
       }
-      return changed;
+      return { ok: true, changed };
     }
     function gHasNearby(g) {
       return !!(g && (g.place || (g.food && g.food.length) ||
@@ -1280,9 +1275,17 @@
       );
       if (apply(pt)) {
         // ENRICH — add opening_hours / coffee / toilet from Nominatim's extratags,
-        // keyed by the exact OSM objects Photon found, and repaint in place.
-        try { if (await enrichNominatim(stop, g, !!useOverpass)) refreshStop(stop); } catch {}
-        return responded;
+        // keyed by the exact OSM objects Photon found, and repaint in place. If the
+        // enrichment call itself FAILS (rate limit / network), report not-fully-
+        // responded so the entry is cached as partial and the next click retries —
+        // otherwise a transient failure would permanently hide the hours chips.
+        let enrichOk = true;
+        try {
+          const r = await enrichNominatim(stop, g, !!useOverpass);
+          enrichOk = r.ok;
+          if (r.changed) refreshStop(stop);
+        } catch { enrichOk = false; }
+        return responded && enrichOk;
       }
       // FALLBACK — Photon found nothing. On a click only, try the heavier Overpass
       // mirrors (separate infrastructure) so the card still has a chance to fill.
