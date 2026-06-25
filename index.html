@@ -665,11 +665,14 @@
     // ============================================================
     async function fetchKml() {
       let lastErr;
+      // Cache-buster on the *source* URL forces the CORS proxies (and Google) to
+      // return fresh KML; `cache: "no-store"` stops the browser reusing a stale copy.
+      const freshUrl = `${KML_URL}&_=${Date.now()}`;
       for (const wrap of KML_PROXIES) {
         const ctl = new AbortController();
         const timer = setTimeout(() => ctl.abort(), KML_TIMEOUT_MS);
         try {
-          const r = await fetch(wrap(KML_URL), { signal: ctl.signal });
+          const r = await fetch(wrap(freshUrl), { signal: ctl.signal, cache: "no-store" });
           if (!r.ok) throw new Error("HTTP " + r.status);
           const t = await r.text();
           if (!/<kml|<Document/i.test(t)) throw new Error("Not KML");
