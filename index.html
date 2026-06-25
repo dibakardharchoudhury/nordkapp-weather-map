@@ -425,7 +425,7 @@
     //      rotating mirrors, so one slow/dead mirror can't stall everything.
     //   4) mirror rotation + cooldown — a 429/timeout parks that mirror for a
     //      minute and we move straight on to the next one (or to Photon / a proxy).
-    const POI_CACHE_PREFIX = "np_poi_v8_";
+    const POI_CACHE_PREFIX = "np_poi_v9_";
     const POI_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — POIs are quasi-static
     const OP_COOLDOWN_MS = 60000;                // park a throttled mirror this long
     function poiKey(lat, lon) { return POI_CACHE_PREFIX + (+lat).toFixed(4) + "_" + (+lon).toFixed(4); }
@@ -995,25 +995,34 @@
       const s = (t.shop || "").toLowerCase();
       return s !== "" && s !== "no";
     }
+    // A staffed forecourt has an indoor counter — which means customer toilets and
+    // hot drinks. OSM marks that either with a `shop` tag or, very commonly on
+    // Norwegian stations, a `food=yes` tag (the station sells food / has a diner).
+    // Both are the station's OWN tags, so this stays evidence-based, not a guess.
+    function fuelHasShopOrFood(t) {
+      if (hasShop(t)) return true;
+      const f = (t.food || "").toLowerCase();
+      return f !== "" && f !== "no";
+    }
     // An automat / self-service-only forecourt (typical of Uno-X and stand-alone
     // truck diesel points) is unstaffed: no café and no customer toilets.
     function fuelSelfServiceOnly(t) {
       const auto = (t.automated || t.self_service || t.unattended || "").toString().toLowerCase();
-      return auto === "yes" && !hasShop(t);
+      return auto === "yes" && !fuelHasShopOrFood(t);
     }
     function fuelHasCoffee(t) {
       // Explicit, station-owned signals first.
       if (t.coffee === "yes" || t.cafe === "yes") return true;
       if ((t.vending || "").toLowerCase().includes("coffee")) return true;
       if (fuelSelfServiceOnly(t)) return false;   // truck / automat → no coffee
-      return hasShop(t);                          // staffed forecourt shop sells hot drinks
+      return fuelHasShopOrFood(t);                // staffed forecourt sells hot drinks
     }
     function fuelHasToilet(t) {
       const acc = (t["toilets:access"] || "").toLowerCase();
       if (t.toilets === "yes" || acc === "yes" || acc === "customers" || acc === "public") return true;
       if (t.toilets === "no" || acc === "no") return false;
       if (fuelSelfServiceOnly(t)) return false;   // truck / automat → no toilet
-      return hasShop(t);                          // staffed forecourt shop has customer toilets
+      return fuelHasShopOrFood(t);                // staffed forecourt has customer toilets
     }
     function formatLocality(d) {
       if (!d) return null;
