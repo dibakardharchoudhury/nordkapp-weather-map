@@ -756,13 +756,17 @@
         : "";
       const nearShop = g && g.shops && g.shops[0];
       const gmLink = gmapsLink(stop);
-      const wx = !w
-        ? `<div class="pop-sub">Loading weather…</div>`
-        : `<div class="pop-wx">
+      const wx = w
+        ? `<div class="pop-wx">
              <span class="pi">${w.icon}</span>
              <span class="pt"><span class="hi">${fmt(w.tmax)}°</span> / <span class="lo">${fmt(w.tmin)}°</span>C — ${w.text}</span>
            </div>
-           <div class="pop-sub">💨 ${fmt(w.wind)} km/h${w.gust != null ? ` (gust ${fmt(w.gust)})` : ""} · 🌧️ ${w.psum != null ? fmt(w.psum) : "—"} mm${w.pprob != null ? ` · ${fmt(w.pprob)}%` : ""}</div>`;
+           <div class="pop-sub">💨 ${fmt(w.wind)} km/h${w.gust != null ? ` (gust ${fmt(w.gust)})` : ""} · 🌧️ ${w.psum != null ? fmt(w.psum) : "—"} mm${w.pprob != null ? ` · ${fmt(w.pprob)}%` : ""}</div>`
+        : stop._wxState === "beyond"
+          ? `<div class="pop-sub">🗓️ No forecast yet — this date is beyond Yr's ~9-day range</div>`
+          : stop._wxState === "fail"
+            ? `<div class="pop-sub">⚠️ Weather unavailable</div>`
+            : `<div class="pop-sub">Loading weather…</div>`;
       const shopHtml = nearShop ? `<div class="pop-sub">🛒 Nearest shop: ${nearShop.name} (${distLabel(nearShop.dist)})</div>` : "";
       const nowHtml = stop._now ? `<div class="pop-sub">🕒 Now ${fmt(stop._now.temp)}° ${stop._now.icon} ${stop._now.text}</div>` : "";
       const driveTxt = driveLine(stop, day);
@@ -789,9 +793,8 @@
       const loc = addrText(stop);
       const locLine = loc ? `<div class="det-loc">📍 ${loc}</div>` : "";
       const gmLink = gmapsLink(stop);
-      const wx = !w
-        ? `<div class="det-sub" style="margin-top:12px">Loading weather…</div>`
-        : `<div class="det-sub" style="margin-top:12px;font-weight:700">🗓️ Forecast · ${shortDate(day.date)}</div>
+      const wx = w
+        ? `<div class="det-sub" style="margin-top:12px;font-weight:700">🗓️ Forecast · ${shortDate(day.date)}</div>
            <div class="det-wx">
              <span class="big">${w.icon}</span>
              <div class="det-temps">
@@ -802,7 +805,12 @@
                <span>💨 <b>${fmt(w.wind)}</b> km/h${w.gust != null ? ` · gust <b>${fmt(w.gust)}</b>` : ""}</span>
                <span>🌧️ <b>${w.psum != null ? fmt(w.psum) : "—"}</b> mm${w.pprob != null ? ` · <b>${fmt(w.pprob)}%</b> chance` : ""}</span>
              </div>
-           </div>`;
+           </div>`
+        : stop._wxState === "beyond"
+          ? `<div class="det-sub" style="margin-top:12px">🗓️ Forecast for ${shortDate(day.date)} isn't available yet — it's beyond Yr's ~9-day range. Current conditions below.</div>`
+          : stop._wxState === "fail"
+            ? `<div class="det-sub" style="margin-top:12px">⚠️ Weather unavailable for this stop.</div>`
+            : `<div class="det-sub" style="margin-top:12px">Loading weather…</div>`;
       const nowHtml = stop._now ? `<div class="det-now" style="margin-top:8px">🕒 <b>Right now:</b> ${fmt(stop._now.temp)}° · ${stop._now.icon} ${stop._now.text} · 💨 ${fmt(stop._now.wind)} km/h</div>` : "";
       const foodHtml = nearList("🍔 Food & restaurants", "food", g ? g.food : [], done, "None mapped nearby");
       const shopsHtml = nearList("🛒 Grocery stores", "shops", g ? g.shops : [], done, "None mapped nearby");
@@ -1508,8 +1516,9 @@
         const m = metData.get(coordKey(s));
         s._now = m && m.now ? m.now : null;           // live "now" at this location, from Yr.no
         const wx = m && m.byDate[s._date];
-        if (wx) { s._wx = wx; metCount++; }
-        else { s._wx = null; if (s._now) beyond++; }  // reached Yr but the date is past its horizon
+        if (wx) { s._wx = wx; s._wxState = "ok"; metCount++; }
+        else if (s._now) { s._wx = null; s._wxState = "beyond"; beyond++; } // reached Yr, date past its ~9-day horizon
+        else { s._wx = null; s._wxState = "fail"; }                         // could not reach Yr for this point
       });
 
       repaintWeather();
@@ -1535,14 +1544,17 @@
         const color = DAY_COLORS[(d.day - 1) % DAY_COLORS.length];
         d.stops.forEach((s) => {
           const w = s._wx;
-          if (!w) return;
-          if (w.tmin != null) lo = Math.min(lo, w.tmin);
-          if (w.tmax != null) hi = Math.max(hi, w.tmax);
+          if (w) {
+            if (w.tmin != null) lo = Math.min(lo, w.tmin);
+            if (w.tmax != null) hi = Math.max(hi, w.tmax);
+          }
+          // Repaint every stop — even those past the forecast horizon — so they show current
+          //  conditions and a clear message instead of a perpetual “Loading weather…”.
           if (s._marker) s._marker.setPopupContent(popupHtml(s, d, color));
           if (selected && selected.stop === s) showDetails(s, d, color);
         });
         const rng = document.getElementById(`rng-${d.day}`);
-        if (rng && isFinite(lo)) rng.textContent = `${fmt(lo)}…${fmt(hi)}°C`;
+        if (rng) rng.textContent = isFinite(lo) ? `${fmt(lo)}…${fmt(hi)}°C` : "beyond Yr range";
       });
     }
 
