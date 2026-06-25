@@ -49,6 +49,7 @@
       --cp-panel-strong: rgba(255, 255, 255, 0.96);
       --cp-sheen: rgba(255, 255, 255, 0.55);
       --cp-highlight: rgba(177, 31, 75, 0.12);
+      --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
     }
     html[data-theme="dark"] {
       color-scheme: dark;
@@ -92,17 +93,18 @@
       display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
       gap: 16px; margin-bottom: 22px;
     }
-    .hero h1 { font-size: 1.5rem; margin: 0 0 3px; letter-spacing: -0.02em; font-weight: 700; }
-    .hero .sub { color: var(--cp-text-muted); font-size: 0.9rem; }
+    .hero .eyebrow { font-size: 0.72rem; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; color: var(--cp-accent); margin-bottom: 2px; }
+    .hero h1 { font-family: var(--font-display); font-size: 2rem; line-height: 1.08; margin: 0 0 6px; letter-spacing: 0; font-weight: 600; }
+    .hero .sub { color: var(--cp-text-muted); font-size: 0.92rem; max-width: 46ch; }
     .hero .badge {
       display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: 999px;
       background: var(--cp-accent-soft); color: var(--cp-accent); font-size: 0.8rem; font-weight: 600;
     }
     .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     button.btn {
-      font-family: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+      font-family: inherit; font-size: 0.88rem; font-weight: 600; cursor: pointer;
       border: 1px solid var(--cp-border); background: var(--cp-surface); color: var(--cp-text);
-      padding: 8px 14px; border-radius: 0.625rem; transition: all .15s ease;
+      padding: 8px 16px; border-radius: 999px; transition: all .15s ease;
     }
     button.btn:hover { border-color: var(--cp-border-strong); }
     button.btn.primary { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
@@ -199,7 +201,7 @@
     }
     .pin span { transform: rotate(45deg); font-size: 13px; line-height: 1; }
     .leaflet-popup-content { margin: 10px 12px; font-size: 0.85rem; min-width: 190px; }
-    .pop-name { font-weight: 700; font-size: 0.95rem; margin-bottom: 2px; }
+    .pop-name { font-family: var(--font-display); font-weight: 700; font-size: 1rem; margin-bottom: 2px; }
     .pop-day { font-size: 0.72rem; color: #666; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .03em; }
     .pop-wx { display: flex; align-items: center; gap: 8px; }
     .pop-wx .pi { font-size: 1.5rem; }
@@ -217,7 +219,7 @@
     .details-empty { color: var(--cp-text-muted); font-size: 0.92rem; }
     .det-head { display: flex; align-items: flex-start; gap: 12px; }
     .det-icon { font-size: 1.9rem; line-height: 1; }
-    .det-name { font-weight: 700; font-size: 1.1rem; }
+    .det-name { font-family: var(--font-display); font-weight: 700; font-size: 1.2rem; letter-spacing: 0; }
     .det-sub { font-size: 0.78rem; color: var(--cp-text-muted); text-transform: uppercase; letter-spacing: .03em; margin-top: 2px; font-weight: 600; }
     .det-day-meta { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; padding: 3px 10px; border-radius: 999px;
       background: var(--cp-accent-soft); color: var(--cp-accent); font-size: 0.8rem; font-weight: 700; }
@@ -232,12 +234,15 @@
     .det-badge { margin-left: auto; align-self: flex-start; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 3px 10px; border-radius: 999px; background: var(--cp-accent-soft); color: var(--cp-accent); white-space: nowrap; }
     .det-wx { display: flex; align-items: center; gap: 18px; margin-top: 14px; flex-wrap: wrap; }
     .det-wx .big { font-size: 2.6rem; line-height: 1; }
-    .det-temps .range { font-size: 1.5rem; font-weight: 700; }
+    .det-temps .range { font-family: var(--font-display); font-size: 1.7rem; font-weight: 700; }
     .det-temps .range .hi { color: var(--cp-danger); }
     .det-temps .range .lo { color: var(--cp-link); }
     .det-temps .desc { font-size: 0.86rem; color: var(--cp-text-muted); }
     .det-metrics { display: flex; gap: 20px; flex-wrap: wrap; font-size: 0.88rem; color: var(--cp-text-muted); }
     .det-metrics b { color: var(--cp-text); font-weight: 600; }
+    .det-forecast-label { margin-top: 16px; font-weight: 700; }
+    .det-cond-meta { margin-top: 8px; font-size: 0.85rem; color: var(--cp-text-muted); }
+    .det-now { display: inline-block; margin-top: 12px; padding: 5px 13px; border-radius: 999px; background: var(--cp-surface-soft); border: 1px solid var(--cp-border); font-size: 0.83rem; color: var(--cp-text-muted); }
     .det-near { margin-top: 14px; border-top: 1px solid var(--cp-border); }
     .det-near > summary.near-title {
       list-style: none; cursor: pointer; user-select: none;
@@ -302,10 +307,11 @@
     @media (max-width: 640px) {
       .wrap { padding: 16px 13px 48px; }
       header.hero { gap: 12px; margin-bottom: 18px; }
-      .hero h1 { font-size: 1.35rem; }
+      .hero h1 { font-size: 1.6rem; }
+      .hero .eyebrow { font-size: 0.66rem; }
       .hero .sub { font-size: 0.88rem; }
-      .toolbar { width: 100%; }
-      button.btn { flex: 1 1 auto; text-align: center; padding: 9px 12px; }
+      .toolbar { width: 100%; justify-content: flex-start; gap: 9px; }
+      button.btn { padding: 9px 17px; }
       button.btn.icon { flex: 0 0 auto; }
       .map-card .map-head { padding: 10px 13px; }
       #leaflet { height: clamp(320px, 56vh, 540px); }
@@ -348,8 +354,9 @@
   <div class="wrap">
     <header class="hero">
       <div class="hero-title">
+        <div class="eyebrow">Norway · Summer 2026</div>
         <h1>Nordkapp Roadtrip</h1>
-        <div class="sub">Tap a stop for its forecast &amp; nearby spots.</div>
+        <div class="sub">Tap any stop to see its weather and what's nearby.</div>
       </div>
       <div class="toolbar">
         <button class="btn icon" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">🌗</button>
@@ -589,10 +596,10 @@
     // decreasing remaining distance/time at each later stop, "arrived" at the end.
     function driveLine(stop, day) {
       const txt = remLabel(stop && stop._remKm, stop && stop._remHr);
-      if (!txt) return day && day.meta ? `🚗 ${day.meta}` : "";
-      if (stop._isEnd && !stop._isStart) return `🏁 Arrived · end of day`;
-      if (stop._isStart) return `🚗 ${txt} ahead today`;
-      return `🚗 ${txt} left to drive`;
+      if (!txt) return day && day.meta ? day.meta : "";
+      if (stop._isEnd && !stop._isStart) return `Arrived · end of day`;
+      if (stop._isStart) return `${txt} ahead today`;
+      return `${txt} to go`;
     }
     function dayTotals(day) {
       const meta = day && day.meta || "";
@@ -744,29 +751,22 @@
     }
     function popupHtml(stop, day, color) {
       const w = stop._wx;
-      const g = stop._g;
       const loc = addrText(stop);
-      const locHtml = loc ? `<div class="pop-loc">📍 ${loc}</div>` : "";
-      const nearShop = g && g.shops && g.shops[0];
+      const locHtml = loc ? `<div class="pop-loc">${loc}</div>` : "";
       const gmLink = gmapsLink(stop);
       const wx = w
         ? `<div class="pop-wx">
              <span class="pi">${w.icon}</span>
-             <span class="pt"><span class="hi">${fmt(w.tmax)}°</span> / <span class="lo">${fmt(w.tmin)}°</span>C — ${w.text}</span>
-           </div>
-           <div class="pop-sub">💨 ${fmt(w.wind)} km/h${w.gust != null ? ` (gust ${fmt(w.gust)})` : ""} · 🌧️ ${w.psum != null ? fmt(w.psum) : "—"} mm${w.pprob != null ? ` · ${fmt(w.pprob)}%` : ""}</div>`
+             <span class="pt"><span class="hi">${fmt(w.tmax)}°</span> / <span class="lo">${fmt(w.tmin)}°</span> — ${w.text}</span>
+           </div>`
         : stop._wxState === "beyond"
           ? seasonalNormalHtml(stop, day, "pop-sub")
           : stop._wxState === "fail"
-            ? `<div class="pop-sub">⚠️ Weather unavailable</div>`
+            ? `<div class="pop-sub">Weather unavailable</div>`
             : `<div class="pop-sub">Loading weather…</div>`;
-      const shopHtml = nearShop ? `<div class="pop-sub">🛒 Nearest shop: ${nearShop.name} (${distLabel(nearShop.dist)})</div>` : "";
-      const nowHtml = stop._now ? `<div class="pop-sub">🕒 Now ${fmt(stop._now.temp)}° ${stop._now.icon} ${stop._now.text}</div>` : "";
-      const driveTxt = driveLine(stop, day);
-      const dayMeta = driveTxt ? `<div class="pop-sub">${driveTxt}</div>` : "";
       return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${stop.name}</div>
-              <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${dayMeta}${locHtml}${wx}${nowHtml}${shopHtml}
-              <div class="pop-sub"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>`;
+              <div class="pop-day" style="color:${color}">${day.label} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${locHtml}${wx}
+              <div class="pop-sub"><a href="${gmLink}" target="_blank" rel="noopener">Open in Google Maps ↗</a></div>`;
     }
 
     // ---- Clicked-stop details panel (below the map) ----
@@ -776,27 +776,30 @@
       const g = stop._g;
       const done = stop._gState === "done";
       const loc = addrText(stop);
-      const locLine = loc ? `<div class="det-loc">📍 ${loc}</div>` : "";
+      const locLine = loc ? `<div class="det-loc">${loc}</div>` : "";
       const gmLink = gmapsLink(stop);
+      const drive = driveLine(stop, day);
+      const condMeta = w && (w.wind != null || w.pprob != null)
+        ? `<div class="det-cond-meta">${[
+            w.wind != null ? `Wind ${fmt(w.wind)} km/h` : null,
+            w.pprob != null ? `${fmt(w.pprob)}% chance of rain` : null
+          ].filter(Boolean).join(" · ")}</div>`
+        : "";
       const wx = w
-        ? `<div class="det-sub" style="margin-top:12px;font-weight:700">🗓️ Forecast · ${shortDate(day.date)}</div>
+        ? `<div class="det-sub det-forecast-label">Forecast · ${shortDate(day.date)}</div>
            <div class="det-wx">
              <span class="big">${w.icon}</span>
              <div class="det-temps">
-               <div class="range"><span class="hi">${fmt(w.tmax)}°</span> / <span class="lo">${fmt(w.tmin)}°</span>C</div>
+               <div class="range"><span class="hi">${fmt(w.tmax)}°</span> / <span class="lo">${fmt(w.tmin)}°</span></div>
                <div class="desc">${w.text}</div>
              </div>
-             <div class="det-metrics">
-               <span>💨 <b>${fmt(w.wind)}</b> km/h${w.gust != null ? ` · gust <b>${fmt(w.gust)}</b>` : ""}</span>
-               <span>🌧️ <b>${w.psum != null ? fmt(w.psum) : "—"}</b> mm${w.pprob != null ? ` · <b>${fmt(w.pprob)}%</b> chance` : ""}</span>
-             </div>
-           </div>`
+           </div>${condMeta}`
         : stop._wxState === "beyond"
-          ? `<div class="det-sub" style="margin-top:12px;font-weight:700">🗓️ ${shortDate(day.date)}</div>${seasonalNormalHtml(stop, day, "det-sub")}`
+          ? `<div class="det-sub det-forecast-label">${shortDate(day.date)}</div>${seasonalNormalHtml(stop, day, "det-cond-meta")}`
           : stop._wxState === "fail"
-            ? `<div class="det-sub" style="margin-top:12px">⚠️ Weather unavailable for this stop.</div>`
-            : `<div class="det-sub" style="margin-top:12px">Loading weather…</div>`;
-      const nowHtml = stop._now ? `<div class="det-now" style="margin-top:8px">🕒 <b>Right now:</b> ${fmt(stop._now.temp)}° · ${stop._now.icon} ${stop._now.text} · 💨 ${fmt(stop._now.wind)} km/h</div>` : "";
+            ? `<div class="det-cond-meta" style="margin-top:14px">Weather unavailable for this stop.</div>`
+            : `<div class="det-cond-meta" style="margin-top:14px">Loading weather…</div>`;
+      const nowHtml = stop._now ? `<div class="det-now">Now ${fmt(stop._now.temp)}° · ${stop._now.icon} ${stop._now.text}</div>` : "";
       const foodHtml = nearList("🍔 Food & restaurants", "food", g ? g.food : [], done, "None mapped nearby");
       const shopsHtml = nearList("🛒 Grocery stores", "shops", g ? g.shops : [], done, "None mapped nearby");
       const fuelHtml = nearList("⛽ Gas stations", "fuel", g ? g.fuel : [], done, "None mapped nearby");
@@ -805,9 +808,9 @@
                 <div>
                   <div class="det-name">${stop.name}</div>
                   <div class="det-sub" style="color:${color}">${day.label} · ${day.title}</div>
-                  ${driveLine(stop, day) ? `<div class="det-day-meta">${driveLine(stop, day)}</div>` : ""}
+                  ${drive ? `<div class="det-day-meta">${drive}</div>` : ""}
                   ${locLine}
-                  <div class="det-coords"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>
+                  <div class="det-coords"><a href="${gmLink}" target="_blank" rel="noopener">Open in Google Maps ↗</a></div>
                 </div>
                 <span class="det-badge">${TYPE_LABEL[stop.type] || "Stop"}</span>
               </div>${wx}${nowHtml}${foodHtml}${shopsHtml}${fuelHtml}`;
@@ -1356,7 +1359,7 @@
       // Legend — one entry per day with its dynamic date and (once loaded) temp range
       document.getElementById("legend").innerHTML = TRIP
         .filter((d) => d.stops.length)
-        .map((d) => `<span class="lg"><span class="sw" style="background:${DAY_COLORS[(d.day - 1) % DAY_COLORS.length]}"></span><b>${d.label}</b> · ${shortDate(d.date)} <span class="rng" id="rng-${d.day}">…</span></span>`)
+        .map((d) => `<span class="lg"><span class="sw" style="background:${DAY_COLORS[(d.day - 1) % DAY_COLORS.length]}"></span><b>${d.label}</b> · ${shortDate(d.date)}</span>`)
         .join("");
     }
 
@@ -1438,7 +1441,7 @@
     function seasonalNormalHtml(stop, day, cls) {
       const n = seasonalNormal(stop.lat, day && day.date);
       if (!n) return "";
-      return `<div class="${cls}">🌡️ ${n.month} average ~${n.hi}° / ${n.lo}°C <span style="opacity:.65">· typical, not a forecast</span></div>`;
+      return `<div class="${cls}">${n.month} average ${n.hi}° / ${n.lo}° <span style="opacity:.65">· typical, not a forecast</span></div>`;
     }
 
     // Pull the MET Norway / Yr.no forecast for one point and aggregate it to per-day values
@@ -1546,11 +1549,7 @@
       }
 
       const when = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      if (beyond) {
-        setStatus("ok", `Updated ${when} · ${beyond} distant stop${beyond > 1 ? "s" : ""} show seasonal averages`);
-      } else {
-        setStatus("ok", `Updated ${when}`);
-      }
+      setStatus("ok", `Updated ${when}`);
     }
 
     // Push the weather now stored on each stop into the markers, the detail card and the day legend.
