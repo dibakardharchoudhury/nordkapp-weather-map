@@ -237,20 +237,19 @@
     .det-temps .desc { font-size: 0.86rem; color: var(--cp-text-muted); }
     .det-metrics { display: flex; gap: 20px; flex-wrap: wrap; font-size: 0.88rem; color: var(--cp-text-muted); }
     .det-metrics b { color: var(--cp-text); font-weight: 600; }
-    .det-near { margin-top: 22px; }
-    .near-title { font-size: 0.82rem; font-weight: 700; color: var(--cp-text); margin-bottom: 10px; letter-spacing: .01em; display: flex; align-items: center; gap: 7px; }
-    .near-empty { font-size: 0.85rem; color: var(--cp-text-muted); font-style: italic; padding: 2px 0; }
-    .near-list { display: flex; flex-direction: column; gap: 8px; }
-    .near-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--cp-surface-soft); border: 1px solid var(--cp-border); transition: border-color .15s ease, transform .15s ease; }
-    .near-item:hover { border-color: var(--cp-border-strong); }
-    .near-ic { flex: 0 0 auto; width: 1.85rem; text-align: center; font-size: 1.25rem; line-height: 1; }
-    .near-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-    .near-name { color: var(--cp-text); font-weight: 600; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .near-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .near-hours { font-size: 0.76rem; color: var(--cp-text-muted); }
-    .near-hours.dim { opacity: 0.6; font-style: italic; }
-    .near-chip { font-size: 0.66rem; font-weight: 700; color: var(--cp-accent); background: var(--cp-accent-soft); padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
-    .near-dist { flex: 0 0 auto; font-size: 0.74rem; font-weight: 700; color: var(--cp-text); background: var(--cp-bg-elevated); border: 1px solid var(--cp-border); padding: 4px 9px; border-radius: 999px; white-space: nowrap; }
+    .det-near { margin-top: 18px; }
+    .near-title { font-size: 0.8rem; font-weight: 700; color: var(--cp-text); margin-bottom: 8px; letter-spacing: .01em; display: flex; align-items: center; gap: 7px; }
+    .near-empty { font-size: 0.82rem; color: var(--cp-text-muted); font-style: italic; padding: 2px 0; }
+    .near-list { display: flex; flex-direction: column; gap: 6px; }
+    .near-item { display: flex; align-items: center; gap: 10px; padding: 8px 11px; border-radius: 11px; background: var(--cp-surface-soft); border: 1px solid var(--cp-border); }
+    .near-ic { flex: 0 0 auto; width: 1.5rem; text-align: center; font-size: 1.15rem; line-height: 1; }
+    .near-body { flex: 1 1 auto; min-width: 0; }
+    .near-line { display: flex; align-items: baseline; gap: 8px; }
+    .near-name { flex: 1 1 auto; color: var(--cp-text); font-weight: 600; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .near-dist { flex: 0 0 auto; font-size: 0.72rem; font-weight: 700; color: var(--cp-text-muted); white-space: nowrap; }
+    .near-sub { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+    .near-hours { font-size: 0.72rem; color: var(--cp-text-muted); }
+    .near-chip { font-size: 0.64rem; font-weight: 700; color: var(--cp-accent); background: var(--cp-accent-soft); padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
 
     footer.note {
       margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--cp-border);
@@ -281,13 +280,25 @@
       .det-wx .big { font-size: 2.1rem; }
       .det-temps .range { font-size: 1.25rem; }
       .det-metrics { gap: 12px; font-size: 0.82rem; }
+      .det-near { margin-top: 14px; }
+      .near-title { font-size: 0.76rem; margin-bottom: 6px; }
+      .near-list { gap: 5px; }
+      .near-item { padding: 7px 10px; gap: 9px; }
+      .near-ic { width: 1.4rem; font-size: 1.05rem; }
+      .near-name { font-size: 0.84rem; }
+      .near-dist { font-size: 0.68rem; }
+      .near-chip { font-size: 0.6rem; padding: 2px 6px; }
+      .near-hours { font-size: 0.68rem; }
+      .det-day-meta { font-size: 0.72rem; }
       .legend { gap: 10px; padding: 10px 13px; font-size: 0.74rem; }
       .leaflet-popup-content { min-width: 160px; font-size: 0.82rem; }
     }
     @media (max-width: 380px) {
-      .near-item { padding: 9px 10px; gap: 9px; }
-      .near-ic { width: 1.5rem; font-size: 1.1rem; }
-      .near-dist { padding: 3px 7px; }
+      .wrap { padding: 13px 10px 40px; }
+      .hero h1 { font-size: 1.2rem; }
+      .near-name { font-size: 0.8rem; }
+      .near-sub { gap: 5px; }
+      .near-chip { font-size: 0.58rem; padding: 2px 5px; }
     }
   </style>
 </head>
@@ -356,7 +367,7 @@
       "https://overpass.osm.ch/api/interpreter",
       "https://overpass.private.coffee/api/interpreter"
     ];
-    const OVERPASS_TIMEOUT_MS = 18000; // per-endpoint cap; a slow/throttled mirror falls through to the next
+    const OVERPASS_TIMEOUT_MS = 13000; // per-endpoint cap; a slow/throttled mirror falls through to the next
 
     // ---- Offline fallback stops (used only if the live Google My Maps KML can't be
     //      reached). Mirrors the Google map in travel order. day / date / title are
@@ -461,6 +472,63 @@
         d.day = i + 1;
         d.date = addDays(TRIP_START, i);
         d.title = prettyDate(d.date);
+      });
+    }
+
+    // ---- Per-stop "remaining drive" metrics ---------------------------------
+    //  Google gives us each day's TOTAL distance & duration (in day.meta). We
+    //  split that total along the route so the day's first stop shows the full
+    //  figure and every subsequent stop shows how much is still left to drive.
+    function durLabel(h) {
+      if (h == null) return "";
+      const m = Math.max(0, Math.round(h * 60));
+      const hh = Math.floor(m / 60), mm = m % 60;
+      if (hh && mm) return `${hh}h ${mm}m`;
+      if (hh) return `${hh}h`;
+      return `${mm}m`;
+    }
+    function remLabel(km, hr) {
+      if (km == null && hr == null) return "";
+      const parts = [];
+      if (km != null) parts.push((km < 10 ? km.toFixed(1) : Math.round(km)) + " km");
+      if (hr != null) parts.push(durLabel(hr));
+      return parts.join(" · ");
+    }
+    // The "drive" line shown on each stop: full total at the day's start,
+    // decreasing remaining distance/time at each later stop, "arrived" at the end.
+    function driveLine(stop, day) {
+      const txt = remLabel(stop && stop._remKm, stop && stop._remHr);
+      if (!txt) return day && day.meta ? `🚗 ${day.meta}` : "";
+      if (stop._isEnd && !stop._isStart) return `🏁 Arrived · end of day`;
+      if (stop._isStart) return `🚗 ${txt} ahead today`;
+      return `🚗 ${txt} left to drive`;
+    }
+    function dayTotals(day) {
+      const meta = day && day.meta || "";
+      const km = (meta.match(/([\d.]+)\s*km/i) || [])[1];
+      const hr = (meta.match(/([\d.]+)\s*hr/i) || [])[1];
+      return { km: km != null ? +km : null, hr: hr != null ? +hr : null };
+    }
+    // For each day, walk the stops and store _remKm / _remHr = distance & time
+    // STILL to drive from that stop to the end of the day (start = full total).
+    function assignLegMetrics() {
+      TRIP.forEach((day) => {
+        const stops = day.stops || [];
+        const { km, hr } = dayTotals(day);
+        let cum = 0;
+        const cumArr = [0];
+        for (let i = 1; i < stops.length; i++) {
+          cum += distKm(stops[i - 1].lat, stops[i - 1].lon, stops[i].lat, stops[i].lon);
+          cumArr.push(cum);
+        }
+        const total = cum || 1;
+        stops.forEach((s, i) => {
+          const frac = Math.max(0, 1 - cumArr[i] / total); // 1 at start → 0 at last
+          s._remKm = km != null ? km * frac : null;
+          s._remHr = hr != null ? hr * frac : null;
+          s._isStart = i === 0;
+          s._isEnd = i === stops.length - 1;
+        });
       });
     }
 
@@ -586,7 +654,8 @@
            </div>
            <div class="pop-sub">💨 ${fmt(w.wind)} km/h${w.gust != null ? ` (gust ${fmt(w.gust)})` : ""} · 🌧️ ${w.psum != null ? fmt(w.psum) : "—"} mm${w.pprob != null ? ` · ${fmt(w.pprob)}%` : ""}</div>`;
       const shopHtml = nearShop ? `<div class="pop-sub">🛒 Nearest shop: ${nearShop.name} (${distLabel(nearShop.dist)})</div>` : "";
-      const dayMeta = day.meta ? `<div class="pop-sub">🚗 ${day.meta}</div>` : "";
+      const driveTxt = driveLine(stop, day);
+      const dayMeta = driveTxt ? `<div class="pop-sub">${driveTxt}</div>` : "";
       return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${stop.name}</div>
               <div class="pop-day" style="color:${color}">${day.label} · ${day.title} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${dayMeta}${locHtml}${descHtml}${wx}${shopHtml}
               <div class="pop-sub"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>`;
@@ -622,15 +691,15 @@
                <span>🌧️ <b>${w.psum != null ? fmt(w.psum) : "—"}</b> mm${w.pprob != null ? ` · <b>${fmt(w.pprob)}%</b> chance` : ""}</span>
              </div>
            </div>`;
-      const foodHtml = nearList("🍔 Food & restaurants nearby", g ? g.food : [], done, "None mapped within 15 km");
-      const shopsHtml = nearList("🛒 Grocery stores nearby", g ? g.shops : [], done, "None mapped within 15 km");
-      const fuelHtml = nearList("⛽ Gas stations (☕ = coffee stop)", g ? g.fuel : [], done, "None mapped within 15 km");
+      const foodHtml = nearList("🍔 Food & restaurants", g ? g.food : [], done, "None mapped nearby");
+      const shopsHtml = nearList("🛒 Grocery stores", g ? g.shops : [], done, "None mapped nearby");
+      const fuelHtml = nearList("⛽ Gas stations · ☕ coffee · 🚻 toilet", g ? g.fuel : [], done, "None mapped nearby");
       return `<div class="det-head">
                 <span class="det-icon">${TYPE_ICON[stop.type] || "📍"}</span>
                 <div>
                   <div class="det-name">${stop.name}</div>
                   <div class="det-sub" style="color:${color}">${day.label} · ${day.title}</div>
-                  ${day.meta ? `<div class="det-day-meta">🚗 ${day.meta}</div>` : ""}
+                  ${driveLine(stop, day) ? `<div class="det-day-meta">${driveLine(stop, day)}</div>` : ""}
                   ${locLine}
                   <div class="det-coords"><a href="${gmLink}" target="_blank" rel="noopener">View on Google Maps ↗</a></div>
                 </div>
@@ -682,15 +751,17 @@
         return `<div class="det-near"><div class="near-title">${title}</div><div class="near-empty">${emptyMsg}</div></div>`;
       }
       const rows = items.map((x) => {
-        const hours = x.hours
-          ? `<span class="near-hours">⏰ ${hoursLabel(x.hours)}</span>`
-          : `<span class="near-hours dim">hours n/a</span>`;
-        const coffee = x.coffee ? `<span class="near-chip">☕ coffee</span>` : "";
+        const bits = [];
+        if (x.coffee) bits.push(`<span class="near-chip">☕ coffee</span>`);
+        if (x.toilet) bits.push(`<span class="near-chip">🚹 toilet</span>`);
+        if (x.hours) bits.push(`<span class="near-hours">⏰ ${hoursLabel(x.hours)}</span>`);
+        const sub = bits.length ? `<div class="near-sub">${bits.join("")}</div>` : "";
         return `<div class="near-item">` +
           `<span class="near-ic">${x.icon}</span>` +
-          `<div class="near-body"><div class="near-name">${x.name}</div>` +
-          `<div class="near-sub">${hours}${coffee}</div></div>` +
-          `<span class="near-dist">${distLabel(x.dist)}</span>` +
+          `<div class="near-body">` +
+            `<div class="near-line"><span class="near-name">${x.name}</span><span class="near-dist">${distLabel(x.dist)}</span></div>` +
+            sub +
+          `</div>` +
           `</div>`;
       }).join("");
       return `<div class="det-near"><div class="near-title">${title}</div><div class="near-list">${rows}</div></div>`;
@@ -734,6 +805,14 @@
       const s = ((t.brand || "") + " " + (t.operator || "") + " " + (t.name || "")).toLowerCase();
       return /circle ?k|statoil|esso|shell|\byx\b|uno-?x|\bbest\b|\bst1\b|\bq8\b|7-?eleven|deli ?de ?luca/.test(s);
     }
+    // Manned highway stations almost always have customer toilets — flag the ones
+    // OSM tags directly, plus the big staffed Norwegian chains.
+    function fuelHasToilet(t) {
+      if (t.toilets === "yes" || t["toilets:access"] === "yes" || t["toilets:access"] === "customers") return true;
+      if (t.shop || t.cafe === "yes") return true;
+      const s = ((t.brand || "") + " " + (t.operator || "") + " " + (t.name || "")).toLowerCase();
+      return /circle ?k|statoil|esso|shell|\byx\b|uno-?x|\bbest\b|\bst1\b|\bq8\b|7-?eleven/.test(s);
+    }
     function formatLocality(d) {
       if (!d) return null;
       const a = d.address || {};
@@ -751,15 +830,16 @@
       return null;
     }
     function overpassQuery(lat, lon) {
-      return `[out:json][timeout:25];(` +
+      // Tighter radii + a hard result cap keep the response small and fast.
+      return `[out:json][timeout:12];(` +
         `nwr(around:500,${lat},${lon})[tourism];` +
         `nwr(around:500,${lat},${lon})[leisure];` +
         `nwr(around:500,${lat},${lon})[historic];` +
         `nwr(around:700,${lat},${lon})[natural][name];` +
-        `nwr(around:15000,${lat},${lon})[amenity~"^(fast_food|restaurant|cafe)$"][name];` +
-        `nwr(around:15000,${lat},${lon})[shop~"^(supermarket|convenience|greengrocer|general)$"][name];` +
-        `nwr(around:15000,${lat},${lon})[amenity=fuel][name];` +
-        `);out tags center;`;
+        `nwr(around:7000,${lat},${lon})[amenity~"^(fast_food|restaurant|cafe)$"][name];` +
+        `nwr(around:7000,${lat},${lon})[shop~"^(supermarket|convenience|greengrocer|general)$"][name];` +
+        `nwr(around:9000,${lat},${lon})[amenity=fuel][name];` +
+        `);out tags center 80;`;
     }
     async function overpass(lat, lon) {
       const body = "data=" + encodeURIComponent(overpassQuery(lat, lon));
@@ -812,15 +892,15 @@
         }
         if (FOOD.includes(t.amenity)) food.push({ name: t.name, icon: foodIcon(t), hours: t.opening_hours || "", dist: d });
         if (SHOP.includes(t.shop)) shops.push({ name: t.name, icon: "🛒", hours: t.opening_hours || "", dist: d });
-        if (t.amenity === "fuel") fuel.push({ name: t.name, icon: "⛽", hours: t.opening_hours || "", dist: d, coffee: fuelHasCoffee(t) });
+        if (t.amenity === "fuel") fuel.push({ name: t.name, icon: "⛽", hours: t.opening_hours || "", dist: d, coffee: fuelHasCoffee(t), toilet: fuelHasToilet(t) });
       }
       food.sort((a, b) => a.dist - b.dist);
       shops.sort((a, b) => a.dist - b.dist);
       fuel.sort((a, b) => a.dist - b.dist);
       g.place = bestPoi;
-      g.food = dedupe(food).slice(0, 6);
-      g.shops = dedupe(shops).slice(0, 6);
-      g.fuel = dedupe(fuel).slice(0, 6);
+      g.food = dedupe(food).slice(0, 3);
+      g.shops = dedupe(shops).slice(0, 3);
+      g.fuel = dedupe(fuel).slice(0, 3);
     }
     async function loadPlace(stop) {
       if (stop._gState) return; // already loading or done
@@ -1007,6 +1087,7 @@
       try {
         await loadLiveTrip();
         normalizeDates();
+        assignLegMetrics();
         renderMap();
       } catch (e) { /* keep current stops */ }
       fetchWeather();
@@ -1015,12 +1096,14 @@
     // ---- Boot: instant map from saved stops, then live Google My Maps + weather ----
     async function boot() {
       normalizeDates();
+      assignLegMetrics();
       initMap();
       renderMap();          // saved stops appear immediately (no network wait)
       setStatus("warn", "Loading live trip from Google My Maps…");
       try {
         await loadLiveTrip();
         normalizeDates();
+        assignLegMetrics();
         renderMap();         // re-render with the live stops (incl. any you just added)
       } catch (e) {
         setStatus("warn", "Showing saved trip — couldn't reach Google My Maps live.");
