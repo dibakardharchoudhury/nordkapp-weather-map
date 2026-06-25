@@ -425,7 +425,7 @@
     //      rotating mirrors, so one slow/dead mirror can't stall everything.
     //   4) mirror rotation + cooldown — a 429/timeout parks that mirror for a
     //      minute and we move straight on to the next one (or to Photon / a proxy).
-    const POI_CACHE_PREFIX = "np_poi_v3_";
+    const POI_CACHE_PREFIX = "np_poi_v4_";
     const POI_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — POIs are quasi-static
     const OP_COOLDOWN_MS = 60000;                // park a throttled mirror this long
     function poiKey(lat, lon) { return POI_CACHE_PREFIX + (+lat).toFixed(4) + "_" + (+lon).toFixed(4); }
@@ -835,7 +835,7 @@
            </div>`;
       const foodHtml = nearList("🍔 Food & restaurants", "food", g ? g.food : [], done, "None mapped nearby");
       const shopsHtml = nearList("🛒 Grocery stores", "shops", g ? g.shops : [], done, "None mapped nearby");
-      const fuelHtml = nearList("⛽ Gas stations · ☕ coffee · 🚻 toilet", "fuel", g ? g.fuel : [], done, "None mapped nearby");
+      const fuelHtml = nearList("⛽ Gas stations", "fuel", g ? g.fuel : [], done, "None mapped nearby");
       return `<div class="det-head">
                 <span class="det-icon">${TYPE_ICON[stop.type] || "📍"}</span>
                 <div>
@@ -955,20 +955,52 @@
       if (t.amenity === "fast_food") return "🍔";
       return "🍽️";
     }
-    // Most Norwegian highway fuel stations also serve coffee — flag the ones
-    // OSM marks with a shop/café, or whose brand is a known coffee-serving chain.
-    function fuelHasCoffee(t) {
-      if (t.cafe === "yes" || t.coffee === "yes" || t.shop) return true;
-      const s = ((t.brand || "") + " " + (t.operator || "") + " " + (t.name || "")).toLowerCase();
-      return /circle ?k|statoil|esso|shell|\byx\b|uno-?x|\bbest\b|\bst1\b|\bq8\b|7-?eleven|deli ?de ?luca/.test(s);
+    // Well-known fast-food / chain brands travellers actively look for. We nudge
+    // these up the list so a Burger King or McDonald's a little further out is
+    // never buried under a handful of closer no-name cafés.
+    const NOTABLE_FOOD = /mcdonald|burger king|\bmax\b|kfc|subway|dolly dimple|peppe|egon|big horn|jordbærpiken|deli ?de ?luca|narvesen|espresso ?house|starbucks|o'?learys|tgi|domino|pizzabakeren/;
+    // Sort key: distance, but recognised chains rank as if they were roughly
+    // half as far, and any fast-food outlet gets a smaller boost. Keeps the list
+    // distance-ordered while guaranteeing the big chains surface.
+    function foodSortKey(x) {
+      const n = (x.name || "").toLowerCase();
+      if (NOTABLE_FOOD.test(n)) return x.dist * 0.45;
+      if (x.icon === "🍔" || x.icon === "🍟") return x.dist * 0.75;
+      return x.dist;
     }
-    // Manned highway stations almost always have customer toilets — flag the ones
-    // OSM tags directly, plus the big staffed Norwegian chains.
+    // OSM frequently fails to tag the McDonald's / Burger King that sits right at a
+    // highway charging or fuel stop, yet it DOES name the charger/fuel node after
+    // it (e.g. "Recharge McDonald's Eidsvoll Verk"). Mining that brand from the
+    // name recovers the eatery keylessly so it still appears on the card.
+    const FOOD_BRANDS = [
+      [/mcdonald'?s/i, "McDonald's"], [/burger ?king/i, "Burger King"],
+      [/\bkfc\b/i, "KFC"], [/subway/i, "Subway"], [/pizzabakeren/i, "Pizzabakeren"],
+      [/dolly dimple/i, "Dolly Dimple's"], [/peppe'?s/i, "Peppes Pizza"],
+      [/deli ?de ?luca/i, "Deli de Luca"], [/espresso ?house/i, "Espresso House"],
+      [/starbucks/i, "Starbucks"], [/\bmax\b/i, "MAX Burgers"]
+    ];
+    function brandFromName(name) {
+      const s = name || "";
+      for (const [re, label] of FOOD_BRANDS) if (re.test(s)) return label;
+      return null;
+    }
+    // Coffee/toilet are shown ONLY when the station's own OSM tags prove it — we
+    // no longer guess from brand, so an unmanned automat or truck diesel point
+    // (no shop, no toilets tag) is correctly shown WITHOUT these amenities.
+    function hasShop(t) {
+      return typeof t.shop === "string" && t.shop !== "" && t.shop !== "no";
+    }
+    function fuelHasCoffee(t) {
+      if (t.coffee === "yes" || t.cafe === "yes" || t["cafe"] === "yes") return true;
+      // A forecourt convenience shop reliably means hot drinks are sold.
+      return hasShop(t);
+    }
     function fuelHasToilet(t) {
-      if (t.toilets === "yes" || t["toilets:access"] === "yes" || t["toilets:access"] === "customers") return true;
-      if (t.shop || t.cafe === "yes") return true;
-      const s = ((t.brand || "") + " " + (t.operator || "") + " " + (t.name || "")).toLowerCase();
-      return /circle ?k|statoil|esso|shell|\byx\b|uno-?x|\bbest\b|\bst1\b|\bq8\b|7-?eleven/.test(s);
+      const acc = (t["toilets:access"] || "").toLowerCase();
+      if (t.toilets === "yes" || acc === "yes" || acc === "customers" || acc === "public") return true;
+      if (t.toilets === "no" || acc === "no") return false;
+      // A staffed convenience shop on the forecourt has customer toilets in practice.
+      return hasShop(t);
     }
     function formatLocality(d) {
       if (!d) return null;
@@ -987,17 +1019,19 @@
       return null;
     }
     function overpassQuery(lat, lon) {
-      // 5 km for food/shops, a touch wider for fuel; a hard result cap keeps the
-      // response small and fast.
+      // Food reaches into the next town (the nearest McDonald's / Burger King on a
+      // road trip is often 10–15 km away), groceries stay closer, fuel widest. The
+      // distance is always shown per row, and a hard result cap keeps it small.
       return `[out:json][timeout:10];(` +
         `nwr(around:500,${lat},${lon})[tourism];` +
         `nwr(around:500,${lat},${lon})[leisure];` +
         `nwr(around:500,${lat},${lon})[historic];` +
         `nwr(around:700,${lat},${lon})[natural][name];` +
-        `nwr(around:5000,${lat},${lon})[amenity~"^(fast_food|restaurant|cafe)$"][name];` +
-        `nwr(around:5000,${lat},${lon})[shop~"^(supermarket|convenience|greengrocer|general)$"][name];` +
-        `nwr(around:9000,${lat},${lon})[amenity=fuel][name];` +
-        `);out tags center 40;`;
+        `nwr(around:15000,${lat},${lon})[amenity~"^(fast_food|restaurant|cafe)$"][name];` +
+        `nwr(around:15000,${lat},${lon})[amenity=charging_station][name];` +
+        `nwr(around:6000,${lat},${lon})[shop~"^(supermarket|convenience|greengrocer|general)$"][name];` +
+        `nwr(around:15000,${lat},${lon})[amenity=fuel][name];` +
+        `);out tags center 80;`;
     }
     const _opCooldown = {}; // endpoint -> timestamp until which to skip it
     let _opTick = 0;        // spread concurrent calls across mirrors
@@ -1050,10 +1084,10 @@
     const PHOTON_TAGS = [
       "amenity:restaurant", "amenity:fast_food", "amenity:cafe",
       "shop:supermarket", "shop:convenience", "shop:greengrocer", "shop:general",
-      "amenity:fuel", "tourism", "historic", "leisure"
+      "amenity:fuel", "amenity:charging_station", "tourism", "historic", "leisure"
     ].map((t) => "osm_tag=" + encodeURIComponent(t)).join("&");
     async function photon(lat, lon) {
-      const url = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lon}&radius=9&limit=50&${PHOTON_TAGS}`;
+      const url = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lon}&radius=15&limit=80&${PHOTON_TAGS}`;
       try {
         return await fetchJsonTimed(url); // direct — fast when not throttled
       } catch (e) {
@@ -1096,12 +1130,17 @@
         if (FOOD.includes(t.amenity)) food.push({ name: t.name, icon: foodIcon(t), hours: t.opening_hours || "", dist: d });
         if (SHOP.includes(t.shop)) shops.push({ name: t.name, icon: "🛒", hours: t.opening_hours || "", dist: d });
         if (t.amenity === "fuel") fuel.push({ name: t.name, icon: "⛽", hours: t.opening_hours || "", dist: d, coffee: fuelHasCoffee(t), toilet: fuelHasToilet(t) });
+        // Recover a co-located eatery that OSM only named on the charger/fuel node.
+        if (t.amenity === "charging_station" || t.amenity === "fuel") {
+          const brand = brandFromName(t.name);
+          if (brand) food.push({ name: brand, icon: foodIcon({ name: brand, amenity: "fast_food" }), hours: "", dist: d });
+        }
       }
-      food.sort((a, b) => a.dist - b.dist);
+      food.sort((a, b) => foodSortKey(a) - foodSortKey(b));
       shops.sort((a, b) => a.dist - b.dist);
       fuel.sort((a, b) => a.dist - b.dist);
       g.place = bestPoi;
-      g.food = dedupe(food).slice(0, 3);
+      g.food = dedupe(food).slice(0, 6);
       g.shops = dedupe(shops).slice(0, 3);
       g.fuel = dedupe(fuel).slice(0, 3);
     }
@@ -1126,15 +1165,20 @@
           const score = PRIO[key] * 5 + d;
           if (score < bestScore) { bestScore = score; bestPoi = { name, type: friendlyType(key, val) }; }
         }
-        if (key === "amenity" && FOOD[val] && d <= 5) food.push({ name, icon: foodIcon({ amenity: val, name }), hours: "", dist: d });
-        else if (key === "shop" && SHOP[val] && d <= 5) shops.push({ name, icon: "🛒", hours: "", dist: d });
-        else if (key === "amenity" && val === "fuel" && d <= 9) fuel.push({ name, icon: "⛽", hours: "", dist: d, coffee: fuelHasCoffee({ name }), toilet: fuelHasToilet({ name }) });
+        if (key === "amenity" && FOOD[val] && d <= 15) food.push({ name, icon: foodIcon({ amenity: val, name }), hours: "", dist: d });
+        else if (key === "shop" && SHOP[val] && d <= 6) shops.push({ name, icon: "🛒", hours: "", dist: d });
+        else if (key === "amenity" && val === "fuel" && d <= 15) fuel.push({ name, icon: "⛽", hours: "", dist: d, coffee: fuelHasCoffee({ name }), toilet: fuelHasToilet({ name }) });
+        // Recover a co-located eatery named on a charger / fuel node (OSM gap).
+        if (key === "amenity" && (val === "charging_station" || val === "fuel") && d <= 15) {
+          const brand = brandFromName(name);
+          if (brand) food.push({ name: brand, icon: foodIcon({ name: brand, amenity: "fast_food" }), hours: "", dist: d });
+        }
       }
-      food.sort((a, b) => a.dist - b.dist);
+      food.sort((a, b) => foodSortKey(a) - foodSortKey(b));
       shops.sort((a, b) => a.dist - b.dist);
       fuel.sort((a, b) => a.dist - b.dist);
       g.place = bestPoi;
-      g.food = dedupe(food).slice(0, 3);
+      g.food = dedupe(food).slice(0, 6);
       g.shops = dedupe(shops).slice(0, 3);
       g.fuel = dedupe(fuel).slice(0, 3);
     }
