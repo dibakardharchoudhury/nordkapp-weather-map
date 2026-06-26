@@ -201,6 +201,33 @@
       box-shadow: 0 1px 4px rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center;
     }
     .pin span { transform: rotate(45deg); font-size: 13px; line-height: 1; }
+
+    /* "You are here!" current-location marker — pulsing accent dot + label pin */
+    .me-wrap { position: relative; width: 18px; height: 18px; }
+    .me-dot {
+      position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; border-radius: 50%;
+      background: var(--cp-accent); border: 3px solid #fff; box-shadow: 0 1px 6px rgba(0,0,0,.45);
+      transform: translate(-50%, -50%); z-index: 2;
+    }
+    .me-pulse {
+      position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; border-radius: 50%;
+      background: var(--cp-accent); transform: translate(-50%, -50%); z-index: 1;
+      animation: mePulse 2.1s cubic-bezier(.2,.6,.3,1) infinite;
+    }
+    @keyframes mePulse {
+      0%   { opacity: .5;  transform: translate(-50%, -50%) scale(1); }
+      100% { opacity: 0;   transform: translate(-50%, -50%) scale(3.6); }
+    }
+    .me-label {
+      position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%);
+      background: var(--cp-accent); color: #fff; font-size: 11px; font-weight: 700;
+      letter-spacing: .01em; white-space: nowrap; padding: 4px 10px; border-radius: 999px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.35); z-index: 3;
+    }
+    .me-label::after {
+      content: ""; position: absolute; left: 50%; bottom: -3px;
+      transform: translateX(-50%) rotate(45deg); width: 8px; height: 8px; background: var(--cp-accent);
+    }
     .leaflet-popup-content { margin: 10px 12px; font-size: 0.85rem; min-width: 190px; }
     .pop-name { font-family: var(--font-display); font-weight: 700; font-size: 1rem; margin-bottom: 2px; }
     .pop-day { font-size: 0.72rem; color: #666; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .03em; }
@@ -908,6 +935,43 @@
         html: `<div class="pin" style="--c:${color}"><span>${emoji}</span></div>`,
         iconSize: [28, 40], iconAnchor: [14, 40], popupAnchor: [0, -36]
       });
+    }
+
+    // ---- "You are here!" — live geolocation marker (HTTPS + permission required) ----
+    let userLoc = null, userMarker = null;
+    function meIcon() {
+      return L.divIcon({
+        className: "",
+        html: `<div class="me-wrap"><div class="me-label">You are here!</div><div class="me-pulse"></div><div class="me-dot"></div></div>`,
+        iconSize: [18, 18], iconAnchor: [9, 9], popupAnchor: [0, -14]
+      });
+    }
+    // Nearest trip stop to the user's current position (for grounded chips + context).
+    function nearestStop() {
+      if (!userLoc) return null;
+      let best = null;
+      TRIP.forEach((d) => (d.stops || []).forEach((s) => {
+        const km = distKm(userLoc.lat, userLoc.lon, s.lat, s.lon);
+        if (!best || km < best.km) best = { stop: s, day: d, km };
+      }));
+      return best;
+    }
+    function locateUser() {
+      if (!("geolocation" in navigator) || !map) return;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          userLoc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+          if (userMarker) userMarker.setLatLng([userLoc.lat, userLoc.lon]);
+          else {
+            userMarker = L.marker([userLoc.lat, userLoc.lon], { icon: meIcon(), zIndexOffset: 1000 })
+              .bindPopup("<b>You are here</b>")
+              .addTo(map); // on the map itself, not `layer`, so re-renders keep it
+          }
+          refreshChatIntro(); // suggestions become location-aware once we know where you are
+        },
+        () => { /* denied / unavailable — chips fall back to date-aware suggestions */ },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+      );
     }
     // Build a Google Maps link for a stop. Two keyless forms each fail on their own:
     // a bare coordinate (`query=lat,lon`) drops an UNNAMED pin — and our hand-placed
@@ -1828,6 +1892,7 @@
       }
       fetchWeather();       // weather fills the popups + legend when it arrives
       prewarmPlaces();      // gently warm the nearby-info cache in the background
+      locateUser();         // drop a "You are here!" marker + unlock location-aware chips
     }
 
     // ============================================================
@@ -1872,6 +1937,14 @@
         trip: "Nordkapp Roadtrip — southern Norway up to Nordkapp",
         today: new Date().toISOString().slice(0, 10),
         startDate: TRIP_START,
+        userLocation: (() => {
+          if (!userLoc) return null;
+          const near = nearestStop();
+          return {
+            coords: `${userLoc.lat.toFixed(4)},${userLoc.lon.toFixed(4)}`,
+            nearestStop: near ? `${near.stop.name} — ${distLabel(near.km)} away (${near.day.label})` : null,
+          };
+        })(),
         days,
       };
     }
@@ -1914,12 +1987,55 @@
     function chatShowIntro() {
       const el = chatMsgsEl();
       el.innerHTML = "";
-      const chips = ["Which day looks wettest?", "Lunch stops on Day 2?", "What's worth seeing at Nordkapp?", "What should we pack?"];
+      const chips = dynamicChips();
       const div = chatAdd("bot",
         `<div class="chat-intro">Hi! I'm your trip copilot — ask about the weather, stops, food, chargers, or what to see. I'm grounded in your live trip data.</div>` +
         `<div class="chat-chips">${chips.map((q) => `<button class="chat-chip" type="button">${q}</button>`).join("")}</div>`
       );
       div.querySelectorAll(".chat-chip").forEach((b) => b.addEventListener("click", () => sendChat(b.textContent)));
+    }
+
+    // Re-render the intro (with fresh chips) if it's currently on screen — e.g. once
+    // geolocation resolves and suggestions can become location-aware.
+    function refreshChatIntro() {
+      const el = chatMsgsEl();
+      if (el && el.querySelector(".chat-intro")) chatShowIntro();
+    }
+
+    // Context-aware suggestion chips, driven by today's date and your current location.
+    function dynamicChips() {
+      const chips = [];
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const dayMs = 86400000;
+      const daysUntil = Math.round((Date.parse(TRIP_START + "T00:00:00Z") - Date.parse(todayIso + "T00:00:00Z")) / dayMs);
+      const todayIdx = TRIP.findIndex((d) => d.date === todayIso);
+
+      // --- Date-aware ---
+      if (daysUntil > 1) {
+        chips.push(`${daysUntil} days to go — what should we pack?`);
+        chips.push(`What's the forecast for Day 1 (${ordinalDate(TRIP_START)})?`);
+      } else if (daysUntil === 1) {
+        chips.push("We leave tomorrow — what should we pack?");
+        chips.push(`What's the forecast for Day 1 (${ordinalDate(TRIP_START)})?`);
+      } else if (todayIdx >= 0) {
+        const d = TRIP[todayIdx];
+        chips.push(`What's the weather for ${d.label} today?`);
+        chips.push(`Where should we eat on ${d.label}?`);
+      } else if (daysUntil === 0) {
+        chips.push("It's Day 1 today — what's the plan?");
+      }
+
+      // --- Location-aware (only meaningful once geolocation resolves) ---
+      const near = nearestStop();
+      if (near) {
+        chips.push("What's near me right now?");
+        if (near.km > 2) chips.push(`How far am I from ${near.stop.name}?`);
+      }
+
+      // --- Fill to 4 with evergreen favourites ---
+      const fallback = ["Which day looks wettest?", "What's worth seeing at Nordkapp?", "Any charging stops to plan?", "What should we pack?"];
+      for (const f of fallback) { if (chips.length >= 4) break; if (!chips.includes(f)) chips.push(f); }
+      return chips.slice(0, 4);
     }
 
     async function sendChat(text) {
