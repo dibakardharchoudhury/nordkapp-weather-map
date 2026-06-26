@@ -1,0 +1,17 @@
+{
+  "name": "nordkapp-ai-proxy",
+  "version": "1.0.0",
+  "description": "Keyless Azure OpenAI proxy (Express on App Service) for the Nordkapp trip chat panel.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.4.1",
+    "express": "^4.21.0"
+  }
+}

@@ -1,0 +1,24 @@
+# Azure Functions
+local.settings.json
+bin
+obj
+__azurite_db*__.json
+__blobstorage__
+__queuestorage__
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Deploy scratch / artifacts
+*.log
+*.zip
+smoke.ps1
+smoke2.ps1
+scm.ps1
+grounded.txt
+health.txt
+smoke.json
+
+# OS
+.DS_Store

@@ -386,6 +386,92 @@
       .near-sub { gap: 5px; }
       .near-chip { font-size: 0.58rem; padding: 2px 5px; }
     }
+
+    /* ============================================================
+       Trip Copilot — keyless AI chat panel
+       ============================================================ */
+    .chat-fab {
+      position: fixed; right: 22px; bottom: 22px; z-index: 1200;
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 18px; border-radius: 999px; cursor: pointer; border: none;
+      background: var(--cp-accent); color: var(--cp-accent-fg);
+      font-family: inherit; font-size: 0.92rem; font-weight: 700;
+      box-shadow: var(--cp-shadow);
+      transition: transform .15s ease, background .15s ease, opacity .15s ease;
+    }
+    .chat-fab:hover { background: var(--cp-accent-hover); transform: translateY(-1px); }
+    .chat-fab .fab-spark { font-size: 1.1rem; line-height: 1; }
+    .chat-fab.hidden { opacity: 0; pointer-events: none; transform: scale(.9); }
+
+    .chat-panel {
+      position: fixed; right: 22px; bottom: 22px; z-index: 1300;
+      width: min(400px, calc(100vw - 32px));
+      height: min(620px, calc(100dvh - 40px));
+      display: flex; flex-direction: column;
+      background: var(--cp-bg-elevated); border: 1px solid var(--cp-border);
+      border-radius: 18px; box-shadow: var(--cp-shadow); overflow: hidden;
+      opacity: 0; transform: translateY(14px) scale(.98); pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .chat-panel.open { opacity: 1; transform: none; pointer-events: auto; }
+
+    .chat-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--cp-border); }
+    .chat-head .ch-icon {
+      width: 34px; height: 34px; border-radius: 10px; flex: 0 0 34px;
+      display: grid; place-items: center; font-size: 1.05rem;
+      background: var(--cp-accent-soft); color: var(--cp-accent);
+    }
+    .chat-head .ch-title { font-weight: 700; font-size: 0.98rem; }
+    .chat-head .ch-sub { font-size: 0.73rem; color: var(--cp-text-muted); }
+    .chat-head .ch-close {
+      margin-left: auto; border: none; background: transparent; cursor: pointer;
+      color: var(--cp-text-muted); font-size: 1.35rem; line-height: 1; padding: 2px 8px; border-radius: 8px;
+    }
+    .chat-head .ch-close:hover { background: var(--cp-surface-soft); color: var(--cp-text); }
+
+    .chat-msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .chat-msg { max-width: 88%; padding: 10px 13px; border-radius: 14px; font-size: 0.9rem; line-height: 1.5; word-wrap: break-word; overflow-wrap: anywhere; }
+    .chat-msg.user { align-self: flex-end; background: var(--cp-accent); color: var(--cp-accent-fg); border-bottom-right-radius: 5px; }
+    .chat-msg.bot { align-self: flex-start; background: var(--cp-surface); border: 1px solid var(--cp-border); border-bottom-left-radius: 5px; }
+    .chat-msg.err { border-color: var(--cp-danger); color: var(--cp-danger); }
+    .chat-msg p { margin: 0 0 8px; } .chat-msg p:last-child { margin-bottom: 0; }
+    .chat-msg ul { margin: 6px 0; padding-left: 18px; } .chat-msg li { margin: 2px 0; }
+    .chat-msg code { background: var(--cp-surface-soft); padding: 1px 5px; border-radius: 5px; font-size: 0.85em; }
+
+    .chat-intro { color: var(--cp-text-muted); font-size: 0.88rem; margin-bottom: 10px; }
+    .chat-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chat-chip {
+      border: 1px solid var(--cp-border); background: var(--cp-surface); color: var(--cp-text);
+      font-family: inherit; font-size: 0.8rem; padding: 6px 11px; border-radius: 999px; cursor: pointer;
+      transition: all .15s ease;
+    }
+    .chat-chip:hover { border-color: var(--cp-accent); color: var(--cp-accent); }
+
+    .chat-typing { display: inline-flex; gap: 4px; align-items: center; padding: 2px 0; }
+    .chat-typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--cp-text-muted); animation: chatBlink 1.2s infinite; }
+    .chat-typing span:nth-child(2) { animation-delay: .2s; } .chat-typing span:nth-child(3) { animation-delay: .4s; }
+    @keyframes chatBlink { 0%, 60%, 100% { opacity: .25; } 30% { opacity: .9; } }
+
+    .chat-input { border-top: 1px solid var(--cp-border); padding: 10px; display: flex; gap: 8px; align-items: flex-end; }
+    .chat-input textarea {
+      flex: 1; resize: none; border: 1px solid var(--cp-border); border-radius: 12px;
+      background: var(--cp-surface); color: var(--cp-text); font-family: inherit; font-size: 0.9rem;
+      padding: 9px 12px; max-height: 120px; line-height: 1.4;
+    }
+    .chat-input textarea:focus { outline: none; border-color: var(--cp-accent); }
+    .chat-send {
+      border: none; background: var(--cp-accent); color: var(--cp-accent-fg); cursor: pointer;
+      width: 40px; height: 40px; border-radius: 12px; font-size: 1.05rem; flex: 0 0 40px;
+      display: grid; place-items: center; transition: background .15s ease;
+    }
+    .chat-send:hover { background: var(--cp-accent-hover); }
+    .chat-send:disabled { opacity: .5; cursor: default; }
+    .chat-foot { font-size: 0.67rem; color: var(--cp-text-soft); text-align: center; padding: 0 12px 9px; }
+
+    @media (max-width: 560px) {
+      .chat-panel { right: 0; bottom: 0; width: 100vw; height: 86dvh; border-radius: 18px 18px 0 0; }
+      .chat-fab { right: 16px; bottom: 16px; }
+    }
   </style>
 </head>
 <body>
@@ -424,6 +510,27 @@
       Weather · MET Norway. Map · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>.
     </footer>
   </div>
+
+  <!-- Trip Copilot — keyless AI chat (calls the managed-identity proxy) -->
+  <button class="chat-fab" id="chatFab" type="button" aria-label="Open Trip Copilot">
+    <span class="fab-spark">✨</span> Ask Copilot
+  </button>
+  <section class="chat-panel" id="chatPanel" role="dialog" aria-label="Trip Copilot">
+    <div class="chat-head">
+      <span class="ch-icon">✨</span>
+      <div>
+        <div class="ch-title">Trip Copilot</div>
+        <div class="ch-sub">Grounded in your live trip data</div>
+      </div>
+      <button class="ch-close" id="chatClose" type="button" aria-label="Close">×</button>
+    </div>
+    <div class="chat-msgs" id="chatMsgs"></div>
+    <div class="chat-input">
+      <textarea id="chatInput" rows="1" placeholder="Ask about your trip…" aria-label="Message"></textarea>
+      <button class="chat-send" id="chatSend" type="button" aria-label="Send">➤</button>
+    </div>
+    <div class="chat-foot">AI can be wrong — weather &amp; opening hours come from your trip data.</div>
+  </section>
 
   <script>
     // ============================================================
@@ -1723,6 +1830,166 @@
       prewarmPlaces();      // gently warm the nearby-info cache in the background
     }
 
+    // ============================================================
+    //  Trip Copilot — keyless AI chat (managed-identity proxy on App Service)
+    // ============================================================
+    const CHAT_PROXY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/chat";
+    const chatHistory = []; // {role:"user"|"assistant", content}
+    let chatBusy = false;
+
+    // Compact, grounded snapshot of the live trip sent with every message.
+    function buildTripContext() {
+      const days = TRIP.map((d) => ({
+        day: d.label,
+        date: d.date,
+        datePretty: d.title,
+        drive: d.meta || null,
+        stops: (d.stops || []).map((s) => {
+          const o = { name: s.name, type: TYPE_LABEL[s.type] || s.type || "stop", coords: `${s.lat},${s.lon}` };
+          if (s._now) o.weatherNow = `${fmt(s._now.temp)}°C, ${s._now.text}`;
+          if (s._wx) {
+            o.forecast = `${fmt(s._wx.tmax)}°/${fmt(s._wx.tmin)}°C, ${s._wx.text}` +
+              (s._wx.wind != null ? `, wind ${fmt(s._wx.wind)} km/h` : "") +
+              (s._wx.pprob != null ? `, ${fmt(s._wx.pprob)}% rain` : "");
+          } else if (s._wxState === "beyond") {
+            o.forecast = "beyond MET ~9-day range (no forecast yet)";
+          } else if (s._wxState === "fail") {
+            o.forecast = "unavailable";
+          }
+          const g = s._g;
+          if (g) {
+            const slim = (arr) => (arr || []).slice(0, 4).map((x) => x.name + (x.hours ? ` (${x.hours})` : ""));
+            const food = slim(g.food), shops = slim(g.shops), fuel = slim(g.fuel);
+            if (g.locality) o.area = g.locality;
+            if (food.length) o.food = food;
+            if (shops.length) o.groceries = shops;
+            if (fuel.length) o.fuel = fuel;
+          }
+          return o;
+        }),
+      }));
+      return {
+        trip: "Nordkapp Roadtrip — southern Norway up to Nordkapp",
+        today: new Date().toISOString().slice(0, 10),
+        startDate: TRIP_START,
+        days,
+      };
+    }
+
+    function chatEsc(s) {
+      return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    }
+    // Light markdown: paragraphs, bullet lists, **bold**, `code`.
+    function chatMarkdown(text) {
+      const inline = (s) => s
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>");
+      const lines = chatEsc(text).split(/\r?\n/);
+      let html = "", inList = false;
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (/^[-*•]\s+/.test(line)) {
+          if (!inList) { html += "<ul>"; inList = true; }
+          html += "<li>" + inline(line.replace(/^[-*•]\s+/, "")) + "</li>";
+        } else {
+          if (inList) { html += "</ul>"; inList = false; }
+          if (line) html += "<p>" + inline(line) + "</p>";
+        }
+      }
+      if (inList) html += "</ul>";
+      return html || "<p></p>";
+    }
+
+    const chatMsgsEl = () => document.getElementById("chatMsgs");
+    function chatAdd(role, html, extraCls) {
+      const el = chatMsgsEl();
+      const div = document.createElement("div");
+      div.className = "chat-msg " + (role === "user" ? "user" : "bot") + (extraCls ? " " + extraCls : "");
+      div.innerHTML = html;
+      el.appendChild(div);
+      el.scrollTop = el.scrollHeight;
+      return div;
+    }
+
+    function chatShowIntro() {
+      const el = chatMsgsEl();
+      el.innerHTML = "";
+      const chips = ["Which day looks wettest?", "Lunch stops on Day 2?", "What's worth seeing at Nordkapp?", "What should we pack?"];
+      const div = chatAdd("bot",
+        `<div class="chat-intro">Hi! I'm your trip copilot — ask about the weather, stops, food, chargers, or what to see. I'm grounded in your live trip data.</div>` +
+        `<div class="chat-chips">${chips.map((q) => `<button class="chat-chip" type="button">${q}</button>`).join("")}</div>`
+      );
+      div.querySelectorAll(".chat-chip").forEach((b) => b.addEventListener("click", () => sendChat(b.textContent)));
+    }
+
+    async function sendChat(text) {
+      text = (text || "").trim();
+      if (!text || chatBusy) return;
+      const input = document.getElementById("chatInput");
+      input.value = ""; input.style.height = "auto";
+
+      const intro = chatMsgsEl().querySelector(".chat-intro");
+      if (intro) intro.closest(".chat-msg").remove();
+
+      chatAdd("user", chatMarkdown(text));
+      chatHistory.push({ role: "user", content: text });
+
+      chatBusy = true;
+      const sendBtn = document.getElementById("chatSend");
+      sendBtn.disabled = true;
+      const typing = chatAdd("bot", `<span class="chat-typing"><span></span><span></span><span></span></span>`);
+
+      try {
+        const r = await fetch(CHAT_PROXY_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: chatHistory.slice(-12), tripContext: buildTripContext() }),
+        });
+        const data = await r.json().catch(() => ({}));
+        typing.remove();
+        if (!r.ok || !data.reply) {
+          chatAdd("bot", `<p>Sorry — I couldn't reach the copilot just now. Please try again in a moment.</p>`, "err");
+        } else {
+          chatAdd("bot", chatMarkdown(data.reply));
+          chatHistory.push({ role: "assistant", content: data.reply });
+        }
+      } catch {
+        typing.remove();
+        chatAdd("bot", `<p>Network hiccup — please try again.</p>`, "err");
+      } finally {
+        chatBusy = false;
+        sendBtn.disabled = false;
+        document.getElementById("chatInput").focus();
+      }
+    }
+
+    function initChat() {
+      const fab = document.getElementById("chatFab");
+      const panel = document.getElementById("chatPanel");
+      const input = document.getElementById("chatInput");
+      const open = () => {
+        panel.classList.add("open");
+        fab.classList.add("hidden");
+        if (!chatMsgsEl().children.length) chatShowIntro();
+        setTimeout(() => input.focus(), 60);
+      };
+      const close = () => { panel.classList.remove("open"); fab.classList.remove("hidden"); };
+      fab.addEventListener("click", open);
+      document.getElementById("chatClose").addEventListener("click", close);
+      document.getElementById("chatSend").addEventListener("click", () => sendChat(input.value));
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(input.value); }
+      });
+      input.addEventListener("input", () => {
+        input.style.height = "auto";
+        input.style.height = Math.min(input.scrollHeight, 120) + "px";
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && panel.classList.contains("open")) close();
+      });
+    }
+
+    initChat();
     boot();
   </script>
 </body>
