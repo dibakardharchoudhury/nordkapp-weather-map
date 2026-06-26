@@ -619,6 +619,17 @@
       const d = new Date(iso + "T00:00:00Z");
       return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
     }
+    // "4th July" — ordinal day + full month, no year (matches the My Maps folder style)
+    function ordinalDate(iso) {
+      if (!iso) return "";
+      const d = new Date(iso + "T00:00:00Z");
+      const day = d.getUTCDate();
+      const suf = (day % 10 === 1 && day !== 11) ? "st"
+                : (day % 10 === 2 && day !== 12) ? "nd"
+                : (day % 10 === 3 && day !== 13) ? "rd" : "th";
+      const month = d.toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
+      return `${day}${suf} ${month}`;
+    }
     // Fill in day / date / title for every day, computed from TRIP_START
     function normalizeDates() {
       TRIP.forEach((d, i) => {
@@ -822,7 +833,7 @@
             ? `<div class="pop-sub">Weather unavailable</div>`
             : `<div class="pop-sub">Loading weather…</div>`;
       return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${stop.name}</div>
-              <div class="pop-day" style="color:${color}">${day.label} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${driveHtml}${locHtml}${wx}
+              <div class="pop-day" style="color:${color}">${day.label} · ${ordinalDate(day.date)} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${driveHtml}${locHtml}${wx}
               <div class="pop-sub"><a href="${gmLink}" target="_blank" rel="noopener">Open in Google Maps ↗</a></div>`;
     }
 
@@ -864,7 +875,7 @@
                 <span class="det-icon">${TYPE_ICON[stop.type] || "📍"}</span>
                 <div>
                   <div class="det-name">${stop.name}</div>
-                  <div class="det-sub" style="color:${color}">${day.label} · ${day.title}</div>
+                  <div class="det-sub" style="color:${color}">${day.label} · ${ordinalDate(day.date)}</div>
                   ${drive ? `<div class="det-day-meta">${drive}</div>` : ""}
                   ${locLine}
                   <div class="det-coords"><a href="${gmLink}" target="_blank" rel="noopener">Open in Google Maps ↗</a></div>
