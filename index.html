@@ -573,8 +573,14 @@
     //  Browsers block cross-origin requests to Google, so the fetch falls through a
     //  short list of public read-only CORS proxies; if all fail we use the baked-in
     //  stops below as an offline fallback so the page is never empty.
-    const MAP_ID = "1abBHiINlwR3S_ad8quDw17Pqgj0nBmw";
-    const KML_URL = `https://www.google.com/maps/d/kml?mid=${MAP_ID}&forcekml=1`;
+    //  The trip spans more than one Google My Maps: each map's KML is fetched and
+    //  the days are concatenated in this order, so the second map simply continues
+    //  where the first leaves off (dates & day numbers flow on automatically).
+    const MAP_IDS = [
+      "1abBHiINlwR3S_ad8quDw17Pqgj0nBmw",   // Part 1 — south → Nordkapp
+      "1J8n9Rq_fXdpNRs0K59kSWx9CX4yilkw"    // Part 2 — the remaining / return leg
+    ];
+    const kmlUrlFor = (mid) => `https://www.google.com/maps/d/kml?mid=${mid}&forcekml=1`;
     const KML_PROXIES = [
       (u) => u,                                                              // direct (works if CORS ever allowed)
       (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
@@ -770,6 +776,9 @@
         d.day = i + 1;
         d.date = addDays(TRIP_START, i);
         d.title = prettyDate(d.date);
+        // Renumber day-labelled folders so the second map continues the count
+        // (e.g. its "Day 1" becomes "Day 7"); leave custom folder names untouched.
+        if (/^day\s*\d+$/i.test((d.label || "").trim())) d.label = "Day " + (i + 1);
       });
     }
 
@@ -835,11 +844,11 @@
     //  Each Folder = one day; the folder name carries the distance & duration.
     //  Each Placemark with a <Point> = one stop (KML coords are lon,lat,alt).
     // ============================================================
-    async function fetchKml() {
+    async function fetchKml(mid) {
       let lastErr;
       // Cache-buster on the *source* URL forces the CORS proxies (and Google) to
       // return fresh KML; `cache: "no-store"` stops the browser reusing a stale copy.
-      const freshUrl = `${KML_URL}&_=${Date.now()}`;
+      const freshUrl = `${kmlUrlFor(mid)}&_=${Date.now()}`;
       for (const wrap of KML_PROXIES) {
         const ctl = new AbortController();
         const timer = setTimeout(() => ctl.abort(), KML_TIMEOUT_MS);
@@ -910,9 +919,16 @@
       return days;
     }
     async function loadLiveTrip() {
-      const days = parseKmlToTrip(await fetchKml());
+      // Fetch every map independently and merge in order. allSettled means one map
+      // being throttled/unreachable never blocks the others — we keep whatever loads.
+      const results = await Promise.allSettled(
+        MAP_IDS.map(async (mid) => parseKmlToTrip(await fetchKml(mid)))
+      );
+      const merged = [];
+      results.forEach((r) => { if (r.status === "fulfilled") merged.push(...r.value); });
+      if (!merged.length) throw new Error("No live stops from any Google My Maps");
       TRIP.length = 0;
-      days.forEach((d) => TRIP.push(d));
+      merged.forEach((d) => TRIP.push(d));
       return TRIP;
     }
 
