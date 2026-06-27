@@ -871,10 +871,14 @@
       const name = rawName || "";
       const m = name.match(/day\s*\d+/i);
       const label = m ? m[0].replace(/day/i, "Day").replace(/\s+/, " ") : (name.trim() || "Day");
-      const hm = name.match(/([\d.]+)\s*h(?:rs?|ours?)?\b/i);
+      // Duration may be "5.4 Hrs" or "3 Hrs 50 Mins" — capture the hours and any minutes.
+      const hm = name.match(/([\d.]+)\s*h(?:rs?|ours?)?(?:\s*([\d.]+)\s*m(?:ins?|inutes?)?)?/i);
       const km = name.match(/([\d.,]+)\s*k\s*ms?\b/i);
       const parts = [];
-      if (hm) parts.push(hm[1].replace(/\.0$/, "") + " hrs");
+      if (hm) {
+        const hrs = parseFloat(hm[1]) + (hm[2] ? parseFloat(hm[2]) / 60 : 0);
+        parts.push((Math.round(hrs * 100) / 100).toString().replace(/\.0+$/, "") + " hrs");
+      }
       if (km) parts.push(km[1].replace(/[, ]/g, "") + " km");
       return { label, meta: parts.join(" · ") };
     }
