@@ -455,6 +455,13 @@
       color: var(--cp-text-muted); font-size: 1.35rem; line-height: 1; padding: 2px 8px; border-radius: 8px;
     }
     .chat-head .ch-close:hover { background: var(--cp-surface-soft); color: var(--cp-text); }
+    .chat-head .ch-reset {
+      margin-left: auto; border: 1px solid var(--cp-border); background: transparent; cursor: pointer;
+      color: var(--cp-text-muted); font-size: 0.72rem; font-weight: 600; line-height: 1;
+      padding: 5px 9px; border-radius: 8px; transition: background .15s, color .15s, border-color .15s;
+    }
+    .chat-head .ch-reset:hover { background: var(--cp-accent-soft); color: var(--cp-accent); border-color: var(--cp-accent); }
+    .chat-head .ch-reset + .ch-close { margin-left: 4px; }
 
     .chat-msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
     .chat-msg { max-width: 88%; padding: 10px 13px; border-radius: 14px; font-size: 0.9rem; line-height: 1.5; word-wrap: break-word; overflow-wrap: anywhere; }
@@ -571,6 +578,7 @@
         <div class="ch-title">Trip Copilot</div>
         <div class="ch-sub">Grounded in your live trip data</div>
       </div>
+      <button class="ch-reset" id="chatReset" type="button" aria-label="New chat" title="Clear chat &amp; start over">⟲ New</button>
       <button class="ch-close" id="chatClose" type="button" aria-label="Close">×</button>
     </div>
     <div class="chat-msgs" id="chatMsgs"></div>
@@ -2092,6 +2100,14 @@
       if (el && el.querySelector(".chat-intro")) chatShowIntro();
     }
 
+    // Wipe the conversation and start fresh with the intro + suggestion chips.
+    function chatReset() {
+      chatHistory.length = 0;
+      chatShowIntro();
+      const input = document.getElementById("chatInput");
+      if (input) { input.value = ""; input.style.height = "auto"; input.focus(); }
+    }
+
     // Context-aware suggestion chips, driven by today's date and your current location.
     function dynamicChips() {
       const chips = [];
@@ -2183,6 +2199,7 @@
       const close = () => { panel.classList.remove("open"); fab.classList.remove("hidden"); };
       fab.addEventListener("click", open);
       document.getElementById("chatClose").addEventListener("click", close);
+      document.getElementById("chatReset").addEventListener("click", chatReset);
       document.getElementById("chatSend").addEventListener("click", () => sendChat(input.value));
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(input.value); }
