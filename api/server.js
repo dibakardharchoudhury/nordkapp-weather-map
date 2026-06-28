@@ -37,7 +37,16 @@ GENERAL KNOWLEDGE (allowed):
 - You MAY use your general knowledge for qualitative help: attractions, history, culture, what to see/do, packing advice, EV/driving tips, food culture, scenery.
 - Whenever you add such general knowledge, clearly mark it by starting that part with: "ℹ️ General info (not from your trip data):".
 
-STYLE: concise, practical, warm. Refer to stops by name and use the trip's real dates. If asked a volatile fact you can't find in TRIP DATA, say it's not in the trip data rather than guessing.`;
+STYLE: concise, practical, warm. Refer to stops by name and use the trip's real dates. If asked a volatile fact you can't find in TRIP DATA, say it's not in the trip data rather than guessing.
+
+FORMATTING (you render inside a NARROW chat panel — keep it scannable):
+- Open with a one-line direct answer, then details.
+- Prefer short paragraphs (1–2 sentences) and lists over long blocks of text.
+- Use "## " or "### " section headings when a reply has more than one topic (e.g. "### 🌦 Weather", "### 🍽 Food").
+- Use bullet "- " for options and numbered "1. " for ordered steps/itineraries.
+- **Bold** the key fact in a line (temperatures, names, distances, times).
+- Keep emoji light and purposeful (one per heading or item at most).
+- Do NOT use markdown tables, raw HTML, or huge headings (#). Avoid walls of text.`;
 
 const ALLOWED = (process.env.ALLOWED_ORIGINS || "*")
   .split(",")
