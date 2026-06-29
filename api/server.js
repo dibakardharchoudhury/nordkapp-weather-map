@@ -8,6 +8,7 @@
 // and system prompt are enforced HERE, server-side, so the client cannot weaken them.
 
 import express from "express";
+import rateLimit from "express-rate-limit";
 import { DefaultAzureCredential } from "@azure/identity";
 import { getTripContext } from "./context.js";
 
@@ -56,25 +57,51 @@ const ALLOWED = (process.env.ALLOWED_ORIGINS || "*")
 
 function applyCors(req, res) {
   const origin = req.headers.origin || "";
-  const allow = ALLOWED.includes("*")
-    ? "*"
-    : ALLOWED.includes(origin)
-      ? origin
-      : ALLOWED[0] || "*";
-  res.set("Access-Control-Allow-Origin", allow);
-  res.set("Vary", "Origin");
-  res.set("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type");
-  res.set("Access-Control-Max-Age", "86400");
+  // Fail CLOSED: only emit an allow header when the caller's origin is explicitly
+  // permitted (or the allowlist is the wildcard). Unknown origins get no header,
+  // so the browser blocks the response. CORS is a browser control only — the
+  // rate limiters below are what actually stop non-browser (curl/script) abuse.
+  let allow = null;
+  if (ALLOWED.includes("*")) allow = "*";
+  else if (origin && ALLOWED.includes(origin)) allow = origin;
+  if (allow) {
+    res.set("Access-Control-Allow-Origin", allow);
+    res.set("Vary", "Origin");
+    res.set("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.set("Access-Control-Max-Age", "86400");
+  }
 }
 
 const app = express();
+// App Service terminates TLS at a single reverse proxy and forwards the real
+// client IP in X-Forwarded-For; trust exactly one hop so per-IP limits key off
+// the true caller (and can't be spoofed by adding extra XFF entries).
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "256kb" }));
 app.use((req, res, next) => {
   applyCors(req, res);
   if (req.method === "OPTIONS") return res.status(204).end();
   next();
 });
+
+// Per-IP rate limits — defend against brute-force / scripted abuse and runaway
+// token cost on the public endpoint. A broad cap on everything, plus a tight cap
+// on the expensive model call.
+// App Service puts the real client IP (as "ip:port") in X-Forwarded-For and
+// req.ip — with trust proxy=1 — resolves to that platform-set value, which a
+// caller CANNOT spoof (unlike the leftmost XFF entry). Strip the port so all
+// requests from one client share a counter.
+function clientKey(req) {
+  let ip = req.ip || "";
+  ip = ip.replace(/^\[(.+)\]:\d+$/, "$1");        // [ipv6]:port -> ipv6
+  if (/^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(ip)) ip = ip.replace(/:\d+$/, ""); // ipv4:port -> ipv4
+  return ip || "unknown";
+}
+const rlOpts = { standardHeaders: true, legacyHeaders: false, keyGenerator: clientKey, message: { error: "Too many requests — slow down and retry shortly." } };
+const globalLimiter = rateLimit({ windowMs: 60_000, max: 60, ...rlOpts });
+const chatLimiter = rateLimit({ windowMs: 60_000, max: 15, ...rlOpts });
+app.use(globalLimiter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -91,7 +118,7 @@ app.get("/api/context", async (_req, res) => {
   }
 });
 
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", chatLimiter, async (req, res) => {
   const body = req.body || {};
   const incoming = Array.isArray(body.messages) ? body.messages : [];
 
