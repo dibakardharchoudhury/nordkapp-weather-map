@@ -2901,6 +2901,7 @@
     let togetherFull = false;
     let togetherActive = false; // true only while the HUD is open & the heartbeat runs (gates async side-effects)
     let myIdentity = "";        // this device's bound person — once chosen, only this name is selectable here
+    let familyMarkers = {};     // Leaflet markers for the other live family cars, keyed by member id
     let wakeLock = null;        // Screen Wake Lock — keeps GPS flowing while Together is on
     let lastFixReqAt = 0;       // throttle one-shot getCurrentPosition requests
 
