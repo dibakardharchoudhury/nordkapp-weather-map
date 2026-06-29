@@ -658,6 +658,7 @@
     .tg-member .tg-name { font-weight: 600; font-size: .9rem; }
     .tg-member .tg-model { color: var(--cp-text-soft); font-size: .72rem; }
     .tg-member .tg-where { color: var(--cp-text-soft); font-size: .7rem; margin-top: 1px; }
+    .tg-member .tg-coord { color: var(--cp-text-soft); font-size: .62rem; margin-top: 1px; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; opacity: .8; letter-spacing: -.2px; }
     .tg-member .tg-meta { margin-left: auto; color: var(--cp-text-soft); font-size: .78rem; white-space: nowrap; text-align: right; }
     .tg-member .tg-meta b { color: var(--cp-text); }
     .tg-summary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .76rem; color: var(--cp-text-soft); margin: 8px 0 2px; padding: 7px 9px; border-radius: 9px; background: var(--cp-surface-2, rgba(127,127,127,.10)); }
@@ -2883,31 +2884,40 @@
       const dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
       return dirs[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
     }
-    // Nearest itinerary stop to an arbitrary point — used only as a fallback label.
-    function nearestStopTo(lat, lng) {
-      let best = null;
-      TRIP.forEach((d) => (d.stops || []).forEach((s) => {
-        const km = distKm(lat, lng, s.lat, s.lon);
-        if (!best || km < best.km) best = { stop: s, day: d, km };
-      }));
-      return best;
+    // Reverse-geocode a live position to a precise, human place — road/neighbourhood
+    // plus town (e.g. "Fjellhamarskogen, Lørenskog"), never an approximated nearest
+    // trip stop. Street-level (zoom 18) and cached per ~11 m so the label tracks the
+    // car as it moves. Priority in the Nominatim pool so live cars resolve ahead of
+    // the boot prewarm; a failed lookup briefly backs off then retries on the next
+    // heartbeat (so a transient rate-limit self-heals).
+    function formatPrecisePlace(d) {
+      if (!d) return null;
+      const a = d.address || {};
+      const town = a.city || a.town || a.village || a.municipality || a.hamlet;
+      const road = a.road || a.pedestrian || a.footway || a.path || a.neighbourhood || a.suburb;
+      const parts = [];
+      if (road && road !== town) parts.push(road);
+      if (town) parts.push(town);
+      if (parts.length) return parts.join(", ");
+      return formatLocality(d);
     }
-    // Reverse-geocode a live position to the actual town/suburb (e.g. "Lørenskog"),
-    // not the nearest trip stop. Cached per ~110 m so a parked car looks up once;
-    // returns undefined while loading, a string when known, or null if it failed.
     const famPlaceCache = {};
     function famPlaceFor(lat, lng) {
-      const key = lat.toFixed(3) + "," + lng.toFixed(3);
+      const key = lat.toFixed(4) + "," + lng.toFixed(4); // ~11 m — label tracks movement
       const c = famPlaceCache[key];
-      if (c) return c.text; // undefined while pending, string/null once resolved
-      famPlaceCache[key] = { text: undefined };
+      if (c) {
+        if (c.pending) return undefined;                 // still loading → "locating…"
+        if (c.text) return c.text;                       // resolved precise place
+        if (Date.now() - c.at < 20000) return undefined; // recent failure → brief backoff
+      }
+      famPlaceCache[key] = { pending: true, at: Date.now() };
       nomPool.add(async () => {
         try {
-          const d = await getJson(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&lat=${lat}&lon=${lng}`);
-          famPlaceCache[key].text = formatLocality(d) || null;
-        } catch { famPlaceCache[key].text = null; }
+          const d = await getJson(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&lat=${lat}&lon=${lng}`);
+          famPlaceCache[key] = { pending: false, at: Date.now(), text: formatPrecisePlace(d) || null };
+        } catch { famPlaceCache[key] = { pending: false, at: Date.now(), text: null }; }
         if (togetherName) renderTogether(); // re-render once the real place name arrives
-      });
+      }, null, true); // priority — jump the boot prewarm queue
       return undefined;
     }
 
@@ -3001,6 +3011,7 @@
           .bindPopup("<b>You are here</b>").addTo(map);
       }
       if (map) map.panTo([userLoc.lat, userLoc.lon], { animate: true });
+      if (togetherName) pushTogether(); // broadcast our new fix immediately (real-time)
       renderDrive();
       refreshChatIntro();
     }
@@ -3087,10 +3098,12 @@
         seen.add(mb.id);
         const car = carForName(mb.name);
         let mk = familyMarkers[mb.id];
-        if (mk) { mk.setLatLng([mb.lat, mb.lng]); mk.setIcon(famIcon(mb.name, car)); }
+        const popup = `<b>${chatEsc(mb.name)}</b><br>${chatEsc(car.model)}<br>` +
+          `<span style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em">${mb.lat.toFixed(5)}, ${mb.lng.toFixed(5)}</span>`;
+        if (mk) { mk.setLatLng([mb.lat, mb.lng]); mk.setIcon(famIcon(mb.name, car)); mk.setPopupContent(popup); }
         else {
           mk = L.marker([mb.lat, mb.lng], { icon: famIcon(mb.name, car), zIndexOffset: 900 })
-            .bindPopup(`<b>${chatEsc(mb.name)}</b><br>${chatEsc(car.model)}`).addTo(map);
+            .bindPopup(popup).addTo(map);
           familyMarkers[mb.id] = mk;
         }
       });
@@ -3203,21 +3216,21 @@
           const eta = (km != null && km > 0.5) ? Math.max(1, Math.round(km / 70 * 60)) : null;
           const ago = Math.max(0, Math.round((Date.now() - mb.ts) / 1000));
           const agoTxt = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
-          // Where they actually are: real town/suburb, falling back to the nearest
-          // trip stop only if the reverse geocode fails.
+          // Where they actually are — precise reverse-geocoded place (road + town),
+          // never an approximated "nearest stop". The exact coords are shown too.
           let whereTxt = "";
           if (has) {
             const place = famPlaceFor(mb.lat, mb.lng);
-            if (place) whereTxt = `📍 ${chatEsc(place.split(",")[0].trim())}`;
-            else if (place === undefined) whereTxt = `📍 locating…`;
-            else { const ns = nearestStopTo(mb.lat, mb.lng); if (ns) whereTxt = `📍 near ${chatEsc(ns.stop.name)}`; }
+            whereTxt = place ? `📍 ${chatEsc(place)}` : `📍 locating…`;
           }
+          const coordTxt = has ? `${mb.lat.toFixed(5)}, ${mb.lng.toFixed(5)}` : "";
           const meta = km != null
             ? `<b>${distLabel(km)}</b>${dir ? " · " + dir : ""}${eta ? "<br>~" + eta + " min" : ""}<br><span style="font-size:.68rem">${agoTxt}</span>`
             : agoTxt;
           html += `<div class="tg-member"><div class="tg-mic">${carSvg(car, 17)}</div>` +
             `<div class="tg-info"><div class="tg-name">${chatEsc(mb.name)}</div><div class="tg-model">${chatEsc(car.model)}</div>` +
-            `${whereTxt ? `<div class="tg-where">${whereTxt}</div>` : ""}</div>` +
+            `${whereTxt ? `<div class="tg-where">${whereTxt}</div>` : ""}` +
+            `${coordTxt ? `<div class="tg-coord">${coordTxt}</div>` : ""}</div>` +
             `<div class="tg-meta">${meta}</div></div>`;
         });
       }
@@ -3236,7 +3249,7 @@
       renderTogether();
       pushTogether();
       if (togetherTimer) clearInterval(togetherTimer);
-      togetherTimer = setInterval(pushTogether, 4000); // real-time heartbeat
+      togetherTimer = setInterval(pushTogether, 3000); // real-time heartbeat (~3 s)
     }
     function stopTogether() {
       if (togetherTimer) { clearInterval(togetherTimer); togetherTimer = null; }
