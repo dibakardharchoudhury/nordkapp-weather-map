@@ -141,7 +141,7 @@ async function overpass(lat, lon) {
   const body = "data=" + encodeURIComponent(overpassQuery(lat, lon));
   for (const ep of OVERPASS_ENDPOINTS) {
     try {
-      const r = await fetchTimed(ep, { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded" } }, 9000);
+      const r = await fetchTimed(ep, { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": UA } }, 9000);
       const j = await r.json();
       if (j && Array.isArray(j.elements)) return j;
     } catch { /* next mirror */ }
@@ -196,12 +196,15 @@ let wxCache = { data: null, ts: 0, building: false };
 
 async function buildTripPoi() {
   const days = await buildTrip();
-  for (const d of days) {
-    for (const s of d.stops) {
-      try { s.poi = poiFor(s, await overpass(s.lat, s.lon)); } catch { s.poi = null; }
-      await sleep(1200); // gentle on shared Overpass mirrors
+  // POI enrichment in the background — do NOT gate readiness on it.
+  (async () => {
+    for (const d of days) {
+      for (const s of d.stops) {
+        try { s.poi = poiFor(s, await overpass(s.lat, s.lon)); } catch { s.poi = null; }
+        await sleep(1200); // gentle on shared Overpass mirrors
+      }
     }
-  }
+  })();
   return days;
 }
 function refreshTrip() {
