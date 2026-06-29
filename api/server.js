@@ -126,7 +126,7 @@ app.get("/api/context", async (_req, res) => {
 // GPS and we echo back the other members seen within a short TTL. Privacy by
 // design — entries self-expire, and rooms/members are capped to bound abuse. The
 // existing per-IP rate limiter (globalLimiter) protects this endpoint too.
-const TOGETHER_TTL_MS = 30_000;     // a member is "live" for 30s after their last ping (clients ping ~every 2s)
+const TOGETHER_TTL_MS = 30_000;     // a member is "live" for 30s after their last ping (client pings ~every 5s)
 const TOGETHER_MAX_MEMBERS = 8;     // per room — one slot per car (3 cars); headroom covers mixed app versions during rollout
 const TOGETHER_MAX_ROOMS = 500;
 const togetherRooms = new Map();    // room -> Map(id -> { name, lat, lng, ts })

@@ -2172,7 +2172,7 @@
     const STREAM_PROXY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/chat/stream";
     const TOGETHER_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/together";
     const TOGETHER_ROOM = "nordkapp-fam-7e3a";  // shared family session for this trip
-    const TOGETHER_POLL_MS = 2000;   // refresh everyone's live position about every 2 s
+    const TOGETHER_POLL_MS = 5000;   // refresh everyone's live position every 5 s — real-time to a human, easy on battery/radio
     const TOGETHER_STALE_MS = 12000; // no fresh fix for >12 s ⇒ show that car as "signal lost"
     // The travelling fleet — three Teslas, one person each. Name → car + colour.
     const TOGETHER_CARS = {
@@ -3504,7 +3504,7 @@
       if (togetherName) acquireFix(true); // already opted in — register a fix at once
       pushTogether();
       if (togetherTimer) clearInterval(togetherTimer);
-      togetherTimer = setInterval(pushTogether, TOGETHER_POLL_MS); // refresh everyone ~every 2 s
+      togetherTimer = setInterval(pushTogether, TOGETHER_POLL_MS); // refresh everyone ~every 5 s
     }
     function stopTogether() {
       togetherActive = false; // gate any in-flight async work from re-populating state after exit
