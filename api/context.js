@@ -19,11 +19,7 @@ const KML_PROXIES = [
   (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
   (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
 ];
-const OVERPASS_ENDPOINTS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-  "https://overpass.private.coffee/api/interpreter",
-];
+const OVERPASS_ENDPOINTS = [];
 const NEAR_KM = 5, FAR_KM = 25;
 
 const TRIP_POI_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -119,59 +115,47 @@ async function buildTrip() {
   return merged;
 }
 
-// ---- POIs (Overpass, server-side, sequential & gentle) --------------------
+// ---- POIs (Photon / komoot — Overpass is blocked from App Service egress) ---
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-function overpassQuery(lat, lon) {
-  return `[out:json][timeout:15];(` +
-    `nwr(around:25000,${lat},${lon})[amenity~"^(fast_food|restaurant|cafe)$"][name];` +
-    `nwr(around:25000,${lat},${lon})[shop~"^(supermarket|convenience|greengrocer|general)$"][name];` +
-    `nwr(around:25000,${lat},${lon})[amenity=fuel][name];` +
-    `);out tags center 60;`;
-}
-function osmCoord(e) {
-  if (e.lat != null && e.lon != null) return [e.lat, e.lon];
-  if (e.center) return [e.center.lat, e.center.lon];
-  return null;
-}
+const PHOTON_TAGS = ["amenity:restaurant", "amenity:fast_food", "amenity:cafe", "shop:supermarket", "shop:convenience", "shop:greengrocer", "shop:general", "amenity:fuel"]
+  .map((t) => "osm_tag=" + encodeURIComponent(t)).join("&");
 function withinOrExpand(items) {
   const near = items.filter((x) => x.dist <= NEAR_KM);
   return near.length ? near : items.filter((x) => x.dist <= FAR_KM);
 }
-async function overpass(lat, lon) {
-  const body = "data=" + encodeURIComponent(overpassQuery(lat, lon));
-  for (const ep of OVERPASS_ENDPOINTS) {
-    try {
-      const r = await fetchTimed(ep, { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": UA } }, 9000);
-      const j = await r.json();
-      if (j && Array.isArray(j.elements)) return j;
-    } catch { /* next mirror */ }
-  }
-  // App Service egress IP can be rate-limited by the mirrors — retry via CORS
-  // proxies (different egress IP), exactly like the browser fallback.
-  const getUrl = OVERPASS_ENDPOINTS[0] + "?data=" + encodeURIComponent(overpassQuery(lat, lon));
-  for (const wrap of [(u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`]) {
-    try {
-      const r = await fetchTimed(wrap(getUrl), { headers: { "User-Agent": UA } }, 9000);
-      const j = await r.json();
-      if (j && Array.isArray(j.elements)) return j;
-    } catch { /* next proxy */ }
-  }
-  return { elements: [] };
+async function photon(lat, lon) {
+  const url = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lon}&radius=25&limit=80&${PHOTON_TAGS}`;
+  const r = await fetchTimed(url, { headers: { "User-Agent": UA } }, 8000);
+  const j = await r.json();
+  return j && Array.isArray(j.features) ? j : { features: [] };
 }
 function poiFor(stop, data) {
-  const FOOD = ["fast_food", "restaurant", "cafe"], SHOP = ["supermarket", "convenience", "greengrocer", "general"];
+  const FOOD = { restaurant: 1, fast_food: 1, cafe: 1 }, SHOP = { supermarket: 1, convenience: 1, greengrocer: 1, general: 1 };
   const food = [], shops = [], fuel = [];
-  for (const e of data.elements || []) {
-    const t = e.tags || {}; if (!t.name) continue;
-    const c = osmCoord(e); if (!c) continue;
-    const d = distKm(stop.lat, stop.lon, c[0], c[1]);
-    if (FOOD.includes(t.amenity)) food.push({ name: t.name, hours: t.opening_hours || "", dist: d });
-    else if (SHOP.includes(t.shop)) shops.push({ name: t.name, hours: t.opening_hours || "", dist: d });
-    else if (t.amenity === "fuel") fuel.push({ name: t.name, hours: t.opening_hours || "", dist: d });
+  for (const f of data.features || []) {
+    const p = f.properties || {}, co = f.geometry && f.geometry.coordinates;
+    if (!p.name || !co) continue;
+    const d = distKm(stop.lat, stop.lon, co[1], co[0]); // [lon,lat]
+    const oid = (p.osm_type && p.osm_id != null) ? (p.osm_type + p.osm_id) : null; // "N123"
+    if (p.osm_key === "amenity" && FOOD[p.osm_value]) food.push({ name: p.name, dist: d, oid });
+    else if (p.osm_key === "shop" && SHOP[p.osm_value]) shops.push({ name: p.name, dist: d, oid });
+    else if (p.osm_key === "amenity" && p.osm_value === "fuel") fuel.push({ name: p.name, dist: d, oid });
   }
-  const pick = (a) => withinOrExpand(a).sort((x, y) => x.dist - y.dist).slice(0, 4)
-    .map((x) => x.name + (x.hours ? ` (${x.hours})` : ""));
+  const pick = (a) => withinOrExpand(a).sort((x, y) => x.dist - y.dist).slice(0, 4);
   return { food: pick(food), shops: pick(shops), fuel: pick(fuel) };
+}
+// Nominatim /lookup fills opening_hours (Photon omits them). Keyless, ~1 req/s.
+async function enrichHours(items) {
+  const ids = items.map((x) => x.oid).filter(Boolean).slice(0, 50);
+  if (!ids.length) return;
+  try {
+    const url = `https://nominatim.openstreetmap.org/lookup?osm_ids=${ids.join(",")}&extratags=1&format=jsonv2`;
+    const r = await fetchTimed(url, { headers: { "User-Agent": UA, Accept: "application/json" } }, 8000);
+    const arr = await r.json();
+    const hrs = {};
+    for (const e of arr || []) { const k = (e.osm_type ? e.osm_type[0].toUpperCase() : "") + e.osm_id; if (e.extratags && e.extratags.opening_hours) hrs[k] = e.extratags.opening_hours; }
+    for (const x of items) { if (x.oid && hrs[x.oid]) x.hours = hrs[x.oid]; }
+  } catch { /* hours stay blank — honest gap */ }
 }
 
 // ---- Weather (MET Norway) -------------------------------------------------
@@ -210,8 +194,14 @@ async function buildTripPoi() {
   (async () => {
     for (const d of days) {
       for (const s of d.stops) {
-        try { s.poi = poiFor(s, await overpass(s.lat, s.lon)); } catch { s.poi = null; }
-        await sleep(1200); // gentle on shared Overpass mirrors
+        try {
+          const p = poiFor(s, await photon(s.lat, s.lon));
+          const all = [...p.food, ...p.shops, ...p.fuel];
+          await enrichHours(all); // one Nominatim lookup per stop fills opening_hours
+          const fmtList = (a) => a.map((x) => x.name + (x.hours ? ` (${x.hours})` : ""));
+          s.poi = { food: fmtList(p.food), shops: fmtList(p.shops), fuel: fmtList(p.fuel) };
+        } catch { s.poi = null; }
+        await sleep(1100); // gentle on Photon + Nominatim (~1 req/s)
       }
     }
   })();
@@ -257,3 +247,4 @@ export async function getTripContext() {
   }));
   return { trip: "Nordkapp Roadtrip — southern Norway up to Nordkapp", startDate: "2026-07-04", today: new Date().toISOString().slice(0, 10), cachedAt: tripCache.ts, weatherAt: wxCache.ts, days };
 }
+
