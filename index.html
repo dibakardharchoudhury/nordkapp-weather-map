@@ -661,7 +661,11 @@
     .tg-pick { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--cp-border); background: var(--cp-surface, #fff); color: var(--cp-text); border-radius: 9px; padding: 5px 11px; font-size: .84rem; font-weight: 600; cursor: pointer; }
     .tg-pick:hover { border-color: var(--cp-accent); color: var(--cp-accent); }
     .tg-pick .tg-on { width: 7px; height: 7px; border-radius: 50%; background: var(--cp-success, #2faf6b); box-shadow: 0 0 0 2px rgba(47,175,107,.25); }
-    .tg-pick.occupied { border-style: dashed; }
+    /* Occupied (another device already shares this car) — explicit, identical styling
+       on every browser so the "taken" state doesn't rely on inconsistent default
+       disabled rendering (desktop Chrome vs mobile Safari looked different). */
+    .tg-pick.occupied, .tg-pick:disabled { border-style: dashed; opacity: .6; cursor: not-allowed; color: var(--cp-text-soft); background: transparent; }
+    .tg-pick.occupied:hover, .tg-pick:disabled:hover { border-color: var(--cp-border); color: var(--cp-text-soft); }
     .tg-full { color: var(--cp-danger, #c0392b); font-size: .78rem; margin-top: 8px; }
     .tg-hint { font-size: .74rem; color: var(--cp-text-soft); margin-top: 8px; }
     .tg-member { display: flex; align-items: center; gap: 9px; padding: 5px 0; }
