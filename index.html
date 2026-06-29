@@ -2173,7 +2173,7 @@
     const TOGETHER_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/together";
     const TOGETHER_ROOM = "nordkapp-fam-7e3a";  // shared family session for this trip
     const TOGETHER_POLL_MS = 5000;   // refresh everyone's live position every 5 s — real-time to a human, easy on battery/radio
-    const TOGETHER_STALE_MS = 12000; // no fresh fix for >12 s ⇒ show that car as "signal lost"
+    const TOGETHER_STALE_MS = 20000; // no fresh fix for >20 s ⇒ stop reporting & show that car "signal lost" (tunnel / locked)
     // The travelling fleet — three Teslas, one person each. Name → car + colour.
     const TOGETHER_CARS = {
       modelx:    { model: "Tesla Model X",             body: "#2f6fe0", window: "rgba(255,255,255,.45)", wheel: "#888888", caliper: null,      tag: "#2f6fe0" },
@@ -3290,11 +3290,14 @@
       if (togetherBusy) return;
       togetherBusy = true;
       try {
-        // Only broadcast while the app is actually on screen — when the screen locks or
-        // the app is backgrounded we stop sharing (the family sees us drop) and resume
-        // automatically on return.
-        const broadcasting = !!togetherName && document.visibilityState !== "hidden";
-        if (broadcasting && !userLoc) acquireFix(false); // no fix yet — go get one so we actually register
+        // Broadcast a live position only while the app is on screen AND we hold a recent
+        // fix. In a tunnel or with the screen locked we stop refreshing, so the family
+        // sees us fade to "signal lost" on our last-known spot (and drop only after the
+        // server's grace window) — and we rejoin automatically the instant a fresh fix returns.
+        const wantShare = !!togetherName && document.visibilityState !== "hidden";
+        if (wantShare && !userLoc) acquireFix(false); // no fix yet — go get one so we actually register
+        const fixFresh = !!userLoc && (Date.now() - userFixAt) <= TOGETHER_STALE_MS;
+        const broadcasting = wantShare && fixFresh;
         const body = { room: TOGETHER_ROOM, id: broadcasting ? togetherId : ("peek-" + (togetherId || "x")) };
         if (broadcasting && userLoc) {
           body.name = togetherName; body.lat = userLoc.lat; body.lng = userLoc.lon;
@@ -3549,14 +3552,15 @@
         acquireFix(true); // force a fresh fix and broadcast it now
         setTimeout(() => driveRefresh.classList.remove("spin"), 700);
       });
-      // Live tracking should only happen while the app is actually on screen. The OS
-      // pauses geolocation when the app is backgrounded or the screen locks, so we drop
-      // out of the family roster at once (the rest see "left") and pause the heartbeat;
-      // returning to the foreground re-arms the wake lock and we reappear immediately.
+      // While the app is on screen we keep a live heartbeat. When it's backgrounded or
+      // the screen locks the OS suspends geolocation, so we simply pause the heartbeat
+      // (just like a long tunnel): the family keeps our last-known spot dimmed as
+      // "signal lost" and we're dropped only after the server's grace window — we do NOT
+      // leave on a lock (that's reserved for an explicit Stop / exit). We rejoin the
+      // instant the screen wakes.
       document.addEventListener("visibilitychange", () => {
         if (!togetherActive) return;
         if (document.visibilityState === "hidden") {
-          if (togetherName) sendLeave();                 // tell the family we've gone offline now
           if (togetherTimer) { clearInterval(togetherTimer); togetherTimer = null; }
         } else {
           requestWakeLock();
@@ -3565,8 +3569,9 @@
           pushTogether();
         }
       });
-      // Closing/hiding the app while sharing — let the family know we've gone offline.
-      window.addEventListener("pagehide", () => { if (togetherActive && togetherName) sendLeave(); });
+      // A genuine close/unload should drop us immediately; a bfcache hide (the page may
+      // resume — e.g. screen lock) must not, so we only leave when not persisted.
+      window.addEventListener("pagehide", (e) => { if (!e.persisted && togetherActive && togetherName) sendLeave(); });
       updateNet();
       window.addEventListener("online", updateNet);
       window.addEventListener("offline", updateNet);
