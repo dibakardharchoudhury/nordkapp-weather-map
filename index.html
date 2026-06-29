@@ -2893,11 +2893,16 @@
     function formatPrecisePlace(d) {
       if (!d) return null;
       const a = d.address || {};
+      // Street, then the precise street-area (district/suburb), then the town.
+      // Showing the suburb/neighbourhood pinpoints the area far better than the
+      // broad municipality alone — e.g. "Fjellstuveien, Stovner, Oslo" instead of
+      // just "Fjellstuveien, Oslo" (Stovner sits on the Oslo/Lørenskog border).
+      const road = a.road || a.pedestrian || a.footway || a.path || a.cycleway;
+      const area = a.suburb || a.neighbourhood || a.quarter || a.city_district || a.borough || a.city_block;
       const town = a.city || a.town || a.village || a.municipality || a.hamlet;
-      const road = a.road || a.pedestrian || a.footway || a.path || a.neighbourhood || a.suburb || a.quarter;
       const parts = [];
-      if (road && road !== town) parts.push(road);
-      if (town) parts.push(town);
+      const seen = new Set();
+      [road, area, town].forEach((p) => { if (p && !seen.has(p)) { seen.add(p); parts.push(p); } });
       if (parts.length) return parts.join(", ");
       return formatLocality(d);
     }
