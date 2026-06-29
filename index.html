@@ -2148,14 +2148,16 @@
     let chatBusy = false;
 
     // Compact, grounded snapshot of the live trip sent with every message.
-    function buildTripContext() {
+    function buildTripContext(opts) {
+      const includeCoords = !opts || opts.coords !== false;
       const days = TRIP.map((d) => ({
         day: d.label,
         date: d.date,
         datePretty: d.title,
         drive: d.meta || null,
         stops: (d.stops || []).map((s) => {
-          const o = { name: s.name, type: TYPE_LABEL[s.type] || s.type || "stop", coords: `${s.lat},${s.lon}` };
+          const o = { name: s.name, type: TYPE_LABEL[s.type] || s.type || "stop" };
+          if (includeCoords) o.coords = `${s.lat},${s.lon}`;
           if (s._now) o.weatherNow = `${fmt(s._now.temp)}°C, ${s._now.text}`;
           if (s._wx) {
             o.forecast = `${fmt(s._wx.tmax)}°/${fmt(s._wx.tmin)}°C, ${s._wx.text}` +
@@ -2566,7 +2568,12 @@
         `   - Keep ordinary stops (chargers, quick stops) as a plain one-liner — don't over-mark.`,
         ``,
         `Every one of these ${day.label} stops MUST appear in the Stops & sightseeing list: ${names.join("; ")}.`,
-        `Keep it friendly, **bold** the key facts, and scannable on a narrow phone screen.`,
+        ``,
+        `Formatting rules (important):`,
+        `- NEVER print raw GPS coordinates or latitude/longitude numbers — they are meaningless to a reader. Refer to every place by its name and town only.`,
+        `- Bold only short key facts (temperatures, distances, drive time, a place name) — never bold a whole sentence or a number string.`,
+        `- One short line per stop. No trailing coordinate strings, no parenthetical lat/long.`,
+        `- Keep it friendly and scannable on a narrow phone screen.`,
       ].join("\n");
     }
 
@@ -2601,7 +2608,7 @@
       const aiEl = document.getElementById("briefAi");
       const payload = JSON.stringify({
         messages: [{ role: "user", content: briefPrompt(day) }],
-        tripContext: buildTripContext(),
+        tripContext: buildTripContext({ coords: false }),
       });
       try {
         let res = await streamMarkdownInto(payload, aiEl);
