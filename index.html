@@ -2369,6 +2369,37 @@
       return out;
     }
 
+    // Which itinerary day are we on? Pick the TRIP day whose date sits closest to
+    // today. Before the trip starts this is Day 1; mid-trip it's the live day;
+    // afterwards it's the last day. This — not geography — is what tells the
+    // outbound leg apart from the return leg.
+    function currentDayIndex() {
+      const t = new Date();
+      const todayMs = Date.UTC(t.getFullYear(), t.getMonth(), t.getDate());
+      let best = 0, bestDiff = Infinity;
+      TRIP.forEach((d, i) => {
+        if (!d.date) return;
+        const diff = Math.abs(new Date(d.date + "T00:00:00Z").getTime() - todayMs);
+        if (diff < bestDiff) { bestDiff = diff; best = i; }
+      });
+      return best;
+    }
+
+    // The stops drive mode considers: only today's day ±1, kept in itinerary
+    // order. This window keeps the outbound and return legs apart even where they
+    // pass back through the same towns — so on Day 1 a return-leg charger (e.g.
+    // Kløfta, ~Day 18, geographically close to home) can never out-rank the
+    // upcoming outbound Eidsvoll charger.
+    function driveWindow() {
+      const cur = currentDayIndex();
+      const lo = Math.max(0, cur - 1), hi = Math.min(TRIP.length - 1, cur + 1);
+      const out = [];
+      for (let i = lo; i <= hi; i++) {
+        (TRIP[i].stops || []).forEach((s) => out.push({ stop: s, day: TRIP[i] }));
+      }
+      return out.length ? out : driveRoute();
+    }
+
     const isChargerStop = (s) =>
       !!s && (s.type === "charger" || /charge|tesla|supercharg/i.test(((s.type || "") + " " + (s.name || ""))));
 
@@ -2383,14 +2414,18 @@
     }
     const angDelta = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
 
-    // Next stop ahead in the direction of travel. Until the car moves we assume
-    // the trip's outbound (northbound) heading, so on Day 1 we surface the
-    // upcoming Eidsvoll charger instead of the Kløfta one behind us on the way home.
+    // Next stop ahead in the direction of travel, chosen only from today's
+    // itinerary window (see driveWindow). Until the car moves we assume the
+    // outbound (northbound) heading, so on Day 1 we surface the upcoming Eidsvoll
+    // charger rather than a return-leg charger. The trip's start point (home) is
+    // never offered as an upcoming destination once we're under way.
     function nextAhead(pred) {
       if (!userLoc) return null;
+      const startStop = (TRIP[0] && TRIP[0].stops && TRIP[0].stops[0]) || null;
       const heading = driveHeading != null ? driveHeading : 0; // 0 = north
       let ahead = null, anyClosest = null;
-      driveRoute().forEach((r) => {
+      driveWindow().forEach((r) => {
+        if (r.stop === startStop) return;       // don't route back to the start home
         if (pred && !pred(r.stop)) return;
         const km = distKm(userLoc.lat, userLoc.lon, r.stop.lat, r.stop.lon);
         if (km < 0.04) return; // essentially standing on it
