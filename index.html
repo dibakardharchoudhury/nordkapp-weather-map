@@ -2885,8 +2885,8 @@
       return dirs[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
     }
     // Reverse-geocode a live position to a precise, human place — road/neighbourhood
-    // plus town (e.g. "Fjellhamarskogen, Lørenskog"), never an approximated nearest
-    // trip stop. Street-level (zoom 18) and cached per ~11 m so the label tracks the
+    // plus town (e.g. "Sverres vei, Lørenskog"), never an approximated nearest trip
+    // stop. Street-level (zoom 16) and cached per ~11 m so the label tracks the car
     // car as it moves. Priority in the Nominatim pool so live cars resolve ahead of
     // the boot prewarm; a failed lookup briefly backs off then retries on the next
     // heartbeat (so a transient rate-limit self-heals).
@@ -2894,7 +2894,7 @@
       if (!d) return null;
       const a = d.address || {};
       const town = a.city || a.town || a.village || a.municipality || a.hamlet;
-      const road = a.road || a.pedestrian || a.footway || a.path || a.neighbourhood || a.suburb;
+      const road = a.road || a.pedestrian || a.footway || a.path || a.neighbourhood || a.suburb || a.quarter;
       const parts = [];
       if (road && road !== town) parts.push(road);
       if (town) parts.push(town);
@@ -2913,7 +2913,7 @@
       famPlaceCache[key] = { pending: true, at: Date.now() };
       nomPool.add(async () => {
         try {
-          const d = await getJson(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&lat=${lat}&lon=${lng}`);
+          const d = await getJson(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&addressdetails=1&lat=${lat}&lon=${lng}`);
           famPlaceCache[key] = { pending: false, at: Date.now(), text: formatPrecisePlace(d) || null };
         } catch { famPlaceCache[key] = { pending: false, at: Date.now(), text: null }; }
         if (togetherName) renderTogether(); // re-render once the real place name arrives
