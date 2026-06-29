@@ -160,7 +160,8 @@ app.post("/api/together", (req, res) => {
       togetherRooms.set(room, m);
     }
     if (!m.has(id) && m.size >= TOGETHER_MAX_MEMBERS) return res.status(429).json({ error: "room full" });
-    m.set(id, { name: cleanMemberName(b.name) || "Traveller", lat: b.lat, lng: b.lng, ts: Date.now() });
+    const acc = finiteIn(b.acc, 0, 100000) ? b.acc : null; // GPS accuracy radius (m), if reported
+    m.set(id, { name: cleanMemberName(b.name) || "Traveller", lat: b.lat, lng: b.lng, acc, ts: Date.now() });
   }
 
   pruneTogether(room);
@@ -168,7 +169,7 @@ app.post("/api/together", (req, res) => {
   const members = [];
   if (m) for (const [mid, v] of m) {
     if (mid === id) continue; // the caller already knows their own position
-    members.push({ id: mid, name: v.name, lat: v.lat, lng: v.lng, ts: v.ts });
+    members.push({ id: mid, name: v.name, lat: v.lat, lng: v.lng, acc: v.acc ?? null, ts: v.ts });
   }
   res.json({ ok: true, members, serverTime: Date.now() });
 });

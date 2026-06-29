@@ -1197,7 +1197,8 @@
       if (!("geolocation" in navigator) || !map) return;
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          userLoc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+          const acc = (pos.coords.accuracy != null && !isNaN(pos.coords.accuracy)) ? pos.coords.accuracy : null;
+          userLoc = { lat: pos.coords.latitude, lon: pos.coords.longitude, acc };
           if (userMarker) userMarker.setLatLng([userLoc.lat, userLoc.lon]);
           else {
             userMarker = L.marker([userLoc.lat, userLoc.lon], { icon: meIcon(), zIndexOffset: 1000 })
@@ -1207,7 +1208,7 @@
           refreshChatIntro(); // suggestions become location-aware once we know where you are
         },
         () => { /* denied / unavailable — chips fall back to date-aware suggestions */ },
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
     }
     // Build a Google Maps link for a stop. Two keyless forms each fail on their own:
@@ -2818,6 +2819,7 @@
     let driveWatchId = null;
     let driveHeading = null;   // degrees (0 = N, 90 = E) — direction of travel
     let driveLastFix = null;   // last fix used to derive heading from movement
+    let driveFixAt = 0;        // timestamp of the last fix we accepted (for coarse-fix rejection)
     // Together mode (live family locations) — see the Together section below.
     let togetherName = "";
     let togetherId = "";
@@ -2997,7 +2999,18 @@
     }
 
     function driveTick(pos) {
-      const next = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+      const acc = (pos.coords.accuracy != null && !isNaN(pos.coords.accuracy)) ? pos.coords.accuracy : null;
+      const next = { lat: pos.coords.latitude, lon: pos.coords.longitude, acc };
+      // Reject a sudden COARSE fix (Wi-Fi / cell-tower fallback, often ±1–3 km) when
+      // we already hold a recent, sharper GPS fix — a coarse fix can drop the car a
+      // few km away in the wrong town. Keep the better fix until GPS re-locks.
+      if (acc != null && acc > 150 &&
+          userLoc && userLoc.acc != null && userLoc.acc <= 150 &&
+          (Date.now() - driveFixAt) < 30000) {
+        renderDrive();
+        return;
+      }
+      driveFixAt = Date.now();
       // Heading: trust the device compass when actually moving, otherwise derive
       // it from movement between fixes (once we've moved ~25 m).
       if (pos.coords.heading != null && !isNaN(pos.coords.heading) && (pos.coords.speed || 0) > 0.5) {
@@ -3036,7 +3049,7 @@
         driveWatchId = navigator.geolocation.watchPosition(
           driveTick,
           () => renderDrive(),
-          { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
         );
       }
     }
@@ -3128,7 +3141,10 @@
       try {
         const broadcasting = !!togetherName;
         const body = { room: TOGETHER_ROOM, id: broadcasting ? togetherId : ("peek-" + (togetherId || "x")) };
-        if (broadcasting && userLoc) { body.name = togetherName; body.lat = userLoc.lat; body.lng = userLoc.lon; }
+        if (broadcasting && userLoc) {
+          body.name = togetherName; body.lat = userLoc.lat; body.lng = userLoc.lon;
+          if (userLoc.acc != null) body.acc = userLoc.acc; // share fix accuracy so others can judge precision
+        }
         const r = await fetch(TOGETHER_URL, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
         });
@@ -3237,13 +3253,17 @@
             whereTxt = place ? `📍 ${chatEsc(place)}` : `📍 locating…`;
           }
           const coordTxt = has ? `${mb.lat.toFixed(5)}, ${mb.lng.toFixed(5)}` : "";
+          // Flag a coarse GPS fix (Wi-Fi/cell), which can place a car off by km.
+          const accTxt = (has && Number.isFinite(mb.acc) && mb.acc > 150)
+            ? ` · ±${mb.acc >= 1000 ? (mb.acc / 1000).toFixed(1) + " km" : Math.round(mb.acc) + " m"}`
+            : "";
           const meta = km != null
             ? `<b>${distLabel(km)}</b>${dir ? " · " + dir : ""}${eta ? "<br>~" + eta + " min" : ""}<br><span style="font-size:.68rem">${agoTxt}</span>`
             : agoTxt;
           html += `<div class="tg-member"><div class="tg-mic">${carSvg(car, 17)}</div>` +
             `<div class="tg-info"><div class="tg-name">${chatEsc(mb.name)}</div><div class="tg-model">${chatEsc(car.model)}</div>` +
             `${whereTxt ? `<div class="tg-where">${whereTxt}</div>` : ""}` +
-            `${coordTxt ? `<div class="tg-coord">${coordTxt}</div>` : ""}</div>` +
+            `${coordTxt ? `<div class="tg-coord">${coordTxt}${accTxt}</div>` : ""}</div>` +
             `<div class="tg-meta">${meta}</div></div>`;
         });
       }
