@@ -629,6 +629,7 @@
     /* === Copilot photo (Snap & Translate) === */
     .chat-photo { background: none; border: 0; color: var(--cp-text-muted); font-size: 1.15rem; cursor: pointer; padding: 0 4px; align-self: flex-end; line-height: 2; }
     .chat-photo:hover { color: var(--cp-accent); }
+    .chat-photo.listening { color: var(--cp-accent); border-radius: 8px; animation: dhpulse 1s ease-in-out infinite; }
     .chat-img { max-width: 200px; max-height: 200px; border-radius: 10px; display: block; margin-bottom: 6px; border: 1px solid var(--cp-border); }
   </style>
 </head>
@@ -643,7 +644,7 @@
       <div class="toolbar">
         <span class="net-pill" id="netPill" hidden>Offline · cached</span>
         <button class="btn icon" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">🌗</button>
-        <button class="btn" id="briefBtn" title="AI briefing for the day">✨ Briefing</button>
+        <button class="btn" id="briefBtn" title="AI summary for today">✨ Today's Summary</button>
         <button class="btn" id="driveBtn" title="Live drive mode" aria-pressed="false">🧭 Drive</button>
         <button class="btn primary" id="refreshBtn" title="Refresh">↻ Refresh</button>
       </div>
@@ -678,12 +679,10 @@
       <div class="dh-title"><span class="dh-live"></span> Drive mode</div>
       <div class="dh-tools">
         <button class="dh-tool" id="driveSpeak" type="button" aria-pressed="false" title="Read stops aloud" hidden>🔊</button>
-        <button class="dh-tool" id="driveMic" type="button" title="Ask by voice" hidden>🎙</button>
       </div>
       <button class="dh-close" id="driveClose" type="button" aria-label="Exit drive mode">×</button>
     </div>
     <div id="driveBody"></div>
-    <div class="dh-voice" id="driveVoice" hidden></div>
   </div>
 
   <button class="chat-fab" id="chatFab" type="button" aria-label="Open Trip Copilot">
@@ -703,6 +702,7 @@
     <div class="chat-input">
       <button class="chat-photo" id="chatPhoto" type="button" aria-label="Snap & translate a photo" title="Snap a sign, menu or landmark to translate">📷</button>
       <input type="file" id="chatFile" accept="image/*" capture="environment" hidden>
+      <button class="chat-photo" id="chatMic" type="button" aria-label="Ask by voice" title="Ask by voice" hidden>🎙</button>
       <textarea id="chatInput" rows="1" placeholder="Ask about your trip…" aria-label="Message"></textarea>
       <button class="chat-send" id="chatSend" type="button" aria-label="Send">➤</button>
     </div>
@@ -2440,6 +2440,7 @@
           if (f) sendChatImage(f);
         });
       }
+      initChatMic(); // voice → text → send, in the Copilot
     }
 
     // ============================================================
@@ -2503,51 +2504,29 @@
     }
 
     // ============================================================
-    //  Day Briefing — instant, complete stop list + AI narrative
+    //  Today's Summary — date-aware AI day summary
     // ============================================================
     const briefCache = {};   // dayIndex -> { text, usage }
     let briefDayIndex = null;
 
-    // Deterministic, never-skips list of EVERY stop for the day (shown instantly,
-    // before/independent of the AI), so sightseeing is guaranteed to be covered.
-    function briefStopsHtml(day) {
-      const stops = day.stops || [];
-      if (!stops.length) {
-        return `<div class="brief-stops"><div class="bs-h">Stops</div>` +
-          `<div class="brief-stop"><span class="bs-ic">📍</span><div><div class="bs-meta">No stops listed for this day.</div></div></div></div>`;
-      }
-      const rows = stops.map((s) => {
-        const ic = TYPE_ICON[s.type] || "📍";
-        const label = TYPE_LABEL[s.type] || "Stop";
-        const area = (s._g && s._g.locality) ? s._g.locality : "";
-        const wx = s._wx
-          ? `${s._wx.icon} ${fmt(s._wx.tmax)}°/${fmt(s._wx.tmin)}° — ${s._wx.text}`
-          : (s._now ? `${fmt(s._now.temp)}° now · ${s._now.text}` : "");
-        return `<div class="brief-stop"><span class="bs-ic">${ic}</span><div>` +
-          `<div class="bs-name">${chatEsc(s.name)}</div>` +
-          `<div class="bs-meta">${label}${area ? " · " + chatEsc(area) : ""}</div>` +
-          (wx ? `<div class="bs-wx">${chatEsc(wx)}</div>` : "") +
-          `</div></div>`;
-      }).join("");
-      const n = stops.length;
-      return `<div class="brief-stops"><div class="bs-h">📍 ${n} stop${n > 1 ? "s" : ""} on ${chatEsc(day.label)} — all listed below</div>${rows}</div>`;
-    }
-
-    // Prompt that anchors the model on THIS day and forces it to cover every stop.
+    // Prompt that anchors the model on THIS day, covers every stop in order, and
+    // clearly flags the genuine MUST-SEE spots (with a short why).
     function briefPrompt(day) {
       const names = (day.stops || []).map((s) => `${s.name} (${TYPE_LABEL[s.type] || "stop"})`);
       return [
-        `Give me a concise but COMPLETE briefing for ${day.label} (${ordinalDate(day.date)}) of my Nordkapp road trip.`,
-        `Use ONLY my trip data for any facts (weather, distances, drive time, chargers, opening hours).`,
+        `Write a clear, pretty "Today's Summary" for ${day.label} (${ordinalDate(day.date)}) of my Nordkapp road trip.`,
+        `Use ONLY my trip data for facts (weather, distances, drive time, chargers, opening hours).`,
         ``,
-        `Use these short sections, in this order:`,
+        `Use these sections, in this order, with the emoji headings shown:`,
         `### 🌦 Weather & what to wear`,
         `### 🚗 Drive & timing — the day's distance/time and a sensible order to do the stops`,
-        `### ⚡ Charging plan — every charger stop today (if none, say so plainly)`,
-        `### 📍 Stops & sightseeing — list EVERY stop below, in order, each with a one-line note on what it is or what to see. Do NOT omit any stop.`,
+        `### ⚡ Charging — every charger stop today (or say there are none)`,
+        `### 📍 Stops & sightseeing — cover EVERY stop below, in order, one short line each.`,
+        `   - For the genuinely special places, START that line with "⭐ **MUST-SEE** — " and add a brief why it's worth it.`,
+        `   - Keep ordinary stops (chargers, quick stops) as a plain one-liner — don't over-mark.`,
         ``,
         `Every one of these ${day.label} stops MUST appear in the Stops & sightseeing list: ${names.join("; ")}.`,
-        `Keep it scannable for a narrow phone screen.`,
+        `Keep it friendly, **bold** the key facts, and scannable on a narrow phone screen.`,
       ].join("\n");
     }
 
@@ -2556,23 +2535,28 @@
       if (!TRIP[idx]) return;
       briefDayIndex = idx;
       const day = TRIP[idx];
-      document.getElementById("briefTitle").textContent = `${day.label} briefing`;
-      document.getElementById("briefSub").textContent = ordinalDate(day.date) + (day.meta ? " · " + day.meta : "");
+      // Date-aware heading: today's matching trip day reads "Today's Summary"
+      // ("Starting Day" before the trip begins); other days read "Day N Summary".
+      const cur = currentDayIndex();
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const heading = idx === cur
+        ? (todayIso < TRIP_START ? "Starting Day Summary" : "Today's Summary")
+        : `${day.label} Summary`;
+      document.getElementById("briefTitle").textContent = heading;
+      document.getElementById("briefSub").textContent = `${day.label} · ${ordinalDate(day.date)}` + (day.meta ? " · " + day.meta : "");
       const body = document.getElementById("briefBody");
-      const stopsHtml = briefStopsHtml(day);
 
       document.getElementById("briefSheet").classList.add("open");
       document.getElementById("briefBackdrop").classList.add("open");
 
-      // Snappy reopen: serve a cached briefing instantly.
+      // Snappy reopen: serve a cached summary instantly.
       if (briefCache[idx]) {
-        body.innerHTML = stopsHtml + `<div class="brief-ai">${chatMarkdown(briefCache[idx].text)}${usageTokenLine(briefCache[idx].usage, "brief-tokens")}</div>`;
+        body.innerHTML = `<div class="brief-ai">${chatMarkdown(briefCache[idx].text)}${usageTokenLine(briefCache[idx].usage, "brief-tokens")}</div>`;
         body.scrollTop = 0;
         return;
       }
 
-      body.innerHTML = stopsHtml +
-        `<div class="brief-ai" id="briefAi"><span class="chat-typing"><span></span><span></span><span></span></span></div>`;
+      body.innerHTML = `<div class="brief-ai" id="briefAi"><span class="chat-typing"><span></span><span></span><span></span></span></div>`;
       body.scrollTop = 0;
       const aiEl = document.getElementById("briefAi");
       const payload = JSON.stringify({
@@ -2626,7 +2610,6 @@
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     let voiceOn = false;
     let lastSpokenStopName = null;
-    let recog = null, recogActive = false;
 
     function pickVoice() {
       const vs = (window.speechSynthesis && window.speechSynthesis.getVoices()) || [];
@@ -2669,49 +2652,36 @@
       else if (ttsOk) window.speechSynthesis.cancel();
     }
 
-    function showVoiceQA(q, a) {
-      const el = document.getElementById("driveVoice");
-      if (!el) return;
-      el.hidden = false;
-      el.innerHTML = (q ? `<div class="dv-q">🎙 “${chatEsc(q)}”</div>` : "") +
-        (a ? `<div class="dv-a">${chatEsc(a)}</div>` : "");
-    }
-
-    async function askByVoiceText(q) {
-      if (!q) return;
-      showVoiceQA(q, "…");
-      const payload = JSON.stringify({
-        messages: [{ role: "user", content: q }],
-        tripContext: buildTripContext(),
-        max_tokens: 500,
-      });
-      let res = null;
-      try { res = await jsonReply(payload); } catch {}
-      const a = res && res.text ? res.text : "Sorry — I couldn't answer that just now.";
-      const plain = a.replace(/[#*_`>]/g, "").replace(/\n{2,}/g, ". ").replace(/\n/g, " ").trim();
-      showVoiceQA(q, plain);
-      speak(plain);
-    }
-
     function initVoice() {
+      // Read-aloud toggle for Drive mode (TTS). The mic / voice-input now lives in
+      // the Copilot panel instead (see initChatMic).
       const sp = document.getElementById("driveSpeak");
       if (ttsOk && sp) {
         sp.hidden = false;
         sp.addEventListener("click", () => setVoice(!voiceOn));
       }
-      const mic = document.getElementById("driveMic");
-      if (SpeechRec && mic) {
-        mic.hidden = false;
-        recog = new SpeechRec();
-        recog.lang = "en-GB"; recog.interimResults = false; recog.maxAlternatives = 1;
-        recog.onresult = (e) => { askByVoiceText(e.results[0][0].transcript); };
-        recog.onend = () => { recogActive = false; mic.classList.remove("listening"); };
-        recog.onerror = () => { recogActive = false; mic.classList.remove("listening"); };
-        mic.addEventListener("click", () => {
-          if (recogActive) { try { recog.stop(); } catch {} return; }
-          try { if (ttsOk) window.speechSynthesis.cancel(); recog.start(); recogActive = true; mic.classList.add("listening"); } catch {}
-        });
-      }
+    }
+
+    // Voice input for the Copilot — speech → text in the box → send.
+    function initChatMic() {
+      const mic = document.getElementById("chatMic");
+      if (!SpeechRec || !mic) return;
+      mic.hidden = false;
+      const recog = new SpeechRec();
+      recog.lang = "en-GB"; recog.interimResults = false; recog.maxAlternatives = 1;
+      let active = false;
+      recog.onresult = (e) => {
+        const t = (e.results[0][0].transcript || "").trim();
+        const input = document.getElementById("chatInput");
+        if (input) input.value = t;
+        if (t) sendChat(t);
+      };
+      recog.onend = () => { active = false; mic.classList.remove("listening"); };
+      recog.onerror = () => { active = false; mic.classList.remove("listening"); };
+      mic.addEventListener("click", () => {
+        if (active) { try { recog.stop(); } catch {} return; }
+        try { recog.start(); active = true; mic.classList.add("listening"); } catch {}
+      });
     }
 
     // ============================================================
