@@ -3056,11 +3056,15 @@
     //  Together mode — live family location sharing. A small fleet of three
     //  Teslas (two people each) shares coarse GPS through the proxy's
     //  ephemeral relay; everyone sees the others as live car pins on the map
-    //  and a roster in the HUD. Max 3 sharing at once; pick your name (or
+    //  and a roster in the HUD. ONE SLOT PER CAR (three cars): the two people on
+    //  a car share a single live pin and GPS, so pick your name (or
     //  re-pick a name already on the map to rejoin / take it over). You only
     //  broadcast once you've chosen a name.
     // ===================================================================
-    const slugId = (name) => "n-" + String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    // One SLOT PER CAR: both people on a car (e.g. Dibakar & Trisha) map to the
+    // SAME id, so they share one slot and one live GPS pin — picking either name
+    // joins (or takes over) that car. Three cars => at most three live pins.
+    const slugId = (name) => "car-" + (TOGETHER_NAME_CAR[String(name || "").trim().toLowerCase()] || "x");
     function carForName(name) {
       const key = TOGETHER_NAME_CAR[String(name || "").trim().toLowerCase()];
       const c = key ? TOGETHER_CARS[key] : null;
@@ -3154,22 +3158,28 @@
       if (!el) return;
       // --- Not joined yet: show the name picker (three cars, two names each). ---
       if (!togetherName) {
-        const occupied = {};
-        (togetherMembers || []).forEach((m) => { occupied[String(m.name || "").toLowerCase()] = true; });
+        // One slot per car: a car is "taken" if any member shares its id. Mark BOTH
+        // names on that car so picking either one joins / takes over the same slot.
+        const occupiedCars = {};
+        (togetherMembers || []).forEach((m) => {
+          const ck = (typeof m.id === "string" && m.id.indexOf("car-") === 0) ? m.id.slice(4) : null;
+          if (ck) occupiedCars[ck] = m.name || "Sharing";
+        });
         const activeCount = (togetherMembers || []).length;
         let html = `<div class="tg-h">👫 Together mode · pick your name</div><div class="tg-cars">`;
         TOGETHER_PEOPLE.forEach(([key, names]) => {
           const car = TOGETHER_CARS[key];
+          const activeName = occupiedCars[key];        // who's sharing this car now (if any)
+          const occ = !!activeName;
           html += `<div class="tg-car"><div class="tg-car-ic">${carSvg(car, 20)}</div><div class="tg-car-names">`;
           names.forEach((nm) => {
-            const occ = occupied[nm.toLowerCase()];
-            html += `<button type="button" class="tg-pick${occ ? " occupied" : ""}" data-name="${nm}" title="${car.model}${occ ? " · already in map — tap to rejoin" : ""}">` +
+            html += `<button type="button" class="tg-pick${occ ? " occupied" : ""}" data-name="${nm}" title="${car.model}${occ ? ` · ${chatEsc(activeName)} sharing — tap to take over` : ""}">` +
               `${occ ? `<span class="tg-on"></span>` : ""}${nm}</button>`;
           });
           html += `</div></div>`;
         });
         html += `</div>`;
-        if (togetherFull) html += `<div class="tg-full">Together mode is full (3 already sharing). Pick a name already on the map to rejoin.</div>`;
+        if (togetherFull) html += `<div class="tg-full">Together mode is full right now. Pick a name already on the map to rejoin.</div>`;
         html += `<div class="tg-hint">${activeCount ? activeCount + " sharing now. " : ""}Your live location is shared with the family only while Together mode is on.</div>`;
         el.innerHTML = html;
         el.querySelectorAll(".tg-pick").forEach((b) => b.addEventListener("click", () => joinTogether(b.dataset.name)));

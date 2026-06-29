@@ -127,7 +127,7 @@ app.get("/api/context", async (_req, res) => {
 // design — entries self-expire, and rooms/members are capped to bound abuse. The
 // existing per-IP rate limiter (globalLimiter) protects this endpoint too.
 const TOGETHER_TTL_MS = 90_000;     // a member is "live" for 90s after their last ping
-const TOGETHER_MAX_MEMBERS = 3;     // per room — the family travels in three cars
+const TOGETHER_MAX_MEMBERS = 8;     // per room — one slot per car (3 cars); headroom covers mixed app versions during rollout
 const TOGETHER_MAX_ROOMS = 500;
 const togetherRooms = new Map();    // room -> Map(id -> { name, lat, lng, ts })
 
