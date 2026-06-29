@@ -3328,6 +3328,7 @@
       try { localStorage.removeItem("togetherName"); } catch { /* ignore */ }
       renderTogether();
     }
+    function renderTogether() {
       const el = document.getElementById("togetherBody");
       if (!el) return;
       // --- Not joined yet: show the name picker (three cars, one name each). ---
