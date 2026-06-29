@@ -78,6 +78,7 @@ async function fetchKml(mid) {
   throw lastErr || new Error("KML unavailable");
 }
 // Regex KML parse (no DOM in Node): grab folders, their names, and point placemarks.
+const stripCdata = (s) => (s || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim();
 function parseKmlToTrip(xml) {
   const blocks = [];
   const folderRe = /<Folder\b[\s\S]*?<\/Folder>/gi;
@@ -87,7 +88,7 @@ function parseKmlToTrip(xml) {
   const days = [];
   for (const g of groups) {
     const nameM = g.match(/<name>([\s\S]*?)<\/name>/i);
-    const { label, meta } = parseDayMeta(nameM ? nameM[1] : "Day");
+    const { label, meta } = parseDayMeta(stripCdata(nameM ? nameM[1] : "Day"));
     const stops = [];
     const pmRe = /<Placemark\b[\s\S]*?<\/Placemark>/gi;
     let pm;
@@ -99,7 +100,7 @@ function parseKmlToTrip(xml) {
       const [lon, lat] = first.split(",").map(Number);
       if (!isFinite(lat) || !isFinite(lon)) continue;
       const nm = blk.match(/<name>([\s\S]*?)<\/name>/i);
-      stops.push({ name: (nm ? nm[1] : "Stop").trim() || "Stop", lat, lon });
+      stops.push({ name: stripCdata(nm ? nm[1] : "Stop") || "Stop", lat, lon });
     }
     if (stops.length) days.push({ label, meta, stops });
   }
