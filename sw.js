@@ -8,7 +8,7 @@
 //   • Map tiles (OpenStreetMap)                    -> cache-first (grows as you pan)
 //   • Data APIs (MET weather, Photon/Nominatim)    -> network-first, fall back to cache
 //   • Chat proxy POSTs                             -> never touched (always live)
-const VERSION = "v1";
+const VERSION = "v2";
 const SHELL_CACHE = `nordkapp-shell-${VERSION}`;
 const TILE_CACHE = `nordkapp-tiles-${VERSION}`;
 const DATA_CACHE = `nordkapp-data-${VERSION}`;
@@ -20,6 +20,9 @@ const SHELL = [
   "./manifest.webmanifest",
   "./icon.svg",
   "./icon-maskable.svg",
+  "./icon-192.png",
+  "./icon-512.png",
+  "./icon-512-maskable.png",
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js",
 ];
@@ -61,8 +64,9 @@ async function cacheFirst(req, cacheName, cap) {
   try {
     const resp = await fetch(req);
     if (resp && (resp.ok || resp.type === "opaque")) {
-      cache.put(req, resp.clone());
-      if (cap) trim(cacheName, cap);
+      // Cache in the background so we never block the tile from painting.
+      const copy = resp.clone();
+      cache.put(req, copy).then(() => { if (cap) maybeTrim(cacheName, cap); });
     }
     return resp;
   } catch (err) {
@@ -86,6 +90,15 @@ async function networkFirst(req, cacheName) {
 }
 
 // Drop the oldest entries once a cache exceeds its cap (rough FIFO).
+// Enumerating the cache is expensive, so during rapid panning/zooming we only
+// trim occasionally (and never on the path that paints a tile).
+let trimming = false;
+async function maybeTrim(cacheName, max) {
+  if (trimming || Math.random() > 0.1) return; // ~1 in 10 puts, one at a time
+  trimming = true;
+  try { await trim(cacheName, max); } finally { trimming = false; }
+}
+
 async function trim(cacheName, max) {
   const cache = await caches.open(cacheName);
   const keys = await cache.keys();

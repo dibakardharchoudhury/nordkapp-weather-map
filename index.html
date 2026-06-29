@@ -1040,9 +1040,18 @@
     let map = null, layer = null;
     function initMap() {
       if (map) return;
-      map = L.map("leaflet", { scrollWheelZoom: true, zoomControl: true }).setView([66, 14], 5);
+      map = L.map("leaflet", {
+        scrollWheelZoom: true,
+        zoomControl: true,
+        preferCanvas: true,      // render polylines on canvas (cheaper than SVG/DOM)
+        zoomAnimationThreshold: 4,
+        wheelDebounceTime: 60,
+      }).setView([66, 14], 5);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 18,
+        crossOrigin: true,
+        updateWhenZooming: false, // don't churn tiles mid-pinch — big mobile win
+        keepBuffer: 2,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       }).addTo(map);
       layer = L.layerGroup().addTo(map);
@@ -2350,16 +2359,48 @@
     //  and that stop's current weather. Reuses the existing location plumbing.
     // ---------------------------------------------------------------------
     let driveWatchId = null;
+    let driveHeading = null;   // degrees (0 = N, 90 = E) — direction of travel
+    let driveLastFix = null;   // last fix used to derive heading from movement
 
-    function nearestOfType(pred) {
+    // All trip stops flattened in itinerary order (outbound → Nordkapp → return).
+    function driveRoute() {
+      const out = [];
+      TRIP.forEach((d) => (d.stops || []).forEach((s) => out.push({ stop: s, day: d })));
+      return out;
+    }
+
+    const isChargerStop = (s) =>
+      !!s && (s.type === "charger" || /charge|tesla|supercharg/i.test(((s.type || "") + " " + (s.name || ""))));
+
+    // Bearing from a → b in degrees (0 = north, clockwise).
+    function bearingDeg(a, b) {
+      const R = Math.PI / 180;
+      const dLon = (b.lon - a.lon) * R;
+      const y = Math.sin(dLon) * Math.cos(b.lat * R);
+      const x = Math.cos(a.lat * R) * Math.sin(b.lat * R) -
+                Math.sin(a.lat * R) * Math.cos(b.lat * R) * Math.cos(dLon);
+      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    }
+    const angDelta = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
+
+    // Next stop ahead in the direction of travel. Until the car moves we assume
+    // the trip's outbound (northbound) heading, so on Day 1 we surface the
+    // upcoming Eidsvoll charger instead of the Kløfta one behind us on the way home.
+    function nextAhead(pred) {
       if (!userLoc) return null;
-      let best = null;
-      TRIP.forEach((d) => (d.stops || []).forEach((s) => {
-        if (!pred(s)) return;
-        const km = distKm(userLoc.lat, userLoc.lon, s.lat, s.lon);
-        if (!best || km < best.km) best = { stop: s, day: d, km };
-      }));
-      return best;
+      const heading = driveHeading != null ? driveHeading : 0; // 0 = north
+      let ahead = null, anyClosest = null;
+      driveRoute().forEach((r) => {
+        if (pred && !pred(r.stop)) return;
+        const km = distKm(userLoc.lat, userLoc.lon, r.stop.lat, r.stop.lon);
+        if (km < 0.04) return; // essentially standing on it
+        if (!anyClosest || km < anyClosest.km) anyClosest = { stop: r.stop, day: r.day, km };
+        const b = bearingDeg(userLoc, { lat: r.stop.lat, lon: r.stop.lon });
+        if (angDelta(b, heading) <= 100) { // inside the forward arc
+          if (!ahead || km < ahead.km) ahead = { stop: r.stop, day: r.day, km };
+        }
+      });
+      return ahead || anyClosest; // fall back to nearest if nothing is ahead
     }
 
     function etaLabel(km) {
@@ -2385,8 +2426,8 @@
           `<div class="dh-hint">Allow location to see your nearest stop, ETA and the next charger.</div>`;
         return;
       }
-      const near = nearestStop();
-      const charger = nearestOfType((s) => /charge|tesla|supercharg/i.test(((s.type || "") + " " + (s.name || ""))));
+      const near = nextAhead(null);
+      const charger = nextAhead(isChargerStop);
       let html = "";
       if (near) {
         const w = driveWeatherLine(near.stop);
@@ -2406,7 +2447,19 @@
     }
 
     function driveTick(pos) {
-      userLoc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+      const next = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+      // Heading: trust the device compass when actually moving, otherwise derive
+      // it from movement between fixes (once we've moved ~25 m).
+      if (pos.coords.heading != null && !isNaN(pos.coords.heading) && (pos.coords.speed || 0) > 0.5) {
+        driveHeading = pos.coords.heading;
+        driveLastFix = next;
+      } else if (driveLastFix && distKm(driveLastFix.lat, driveLastFix.lon, next.lat, next.lon) > 0.025) {
+        driveHeading = bearingDeg(driveLastFix, next);
+        driveLastFix = next;
+      } else if (!driveLastFix) {
+        driveLastFix = next;
+      }
+      userLoc = next;
       if (userMarker) userMarker.setLatLng([userLoc.lat, userLoc.lon]);
       else if (map) {
         userMarker = L.marker([userLoc.lat, userLoc.lon], { icon: meIcon(), zIndexOffset: 1000 })
@@ -2420,6 +2473,7 @@
     function startDrive() {
       const hud = document.getElementById("driveHud");
       const btn = document.getElementById("driveBtn");
+      driveHeading = null; driveLastFix = null; // re-derive direction for this session
       hud.classList.add("open");
       btn.setAttribute("aria-pressed", "true");
       renderDrive();
