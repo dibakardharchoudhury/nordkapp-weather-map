@@ -3275,7 +3275,7 @@
       try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch { /* ignore */ }
     }
     // Tell the relay we're leaving so the rest of the family sees us drop offline at
-    // once, instead of lingering for the 90s server TTL. Uses a keepalive fetch (not
+    // once, instead of lingering for the server's grace-window TTL. Uses a keepalive fetch (not
     // sendBeacon): sendBeacon always sends with credentials=include, which trips the
     // relay's CORS preflight so the leave never lands. A keepalive fetch matches the
     // working pushTogether request and still fires while the page is closing.
@@ -3287,7 +3287,11 @@
       } catch { /* ignore */ }
     }
     async function pushTogether() {
-      if (togetherBusy) return;
+      // Never touch the relay once we've left. acquireFix uses a one-shot getCurrentPosition
+      // with a 15 s timeout, so its success callback (which calls pushTogether) can fire long
+      // after an exit — without this guard a late fix would re-POST our position and silently
+      // re-add us to the family after sendLeave already dropped us.
+      if (!togetherActive || togetherBusy) return;
       togetherBusy = true;
       try {
         // Broadcast a live position only while the app is on screen AND we hold a recent
@@ -3515,7 +3519,7 @@
     }
     function stopTogether() {
       togetherActive = false; // gate any in-flight async work from re-populating state after exit
-      sendLeave(); // drop us from the family roster immediately (no 90s TTL wait)
+      sendLeave(); // drop us from the family roster immediately (no TTL-grace wait)
       if (togetherTimer) { clearInterval(togetherTimer); togetherTimer = null; }
       togetherMembers = [];
       clearFamilyMarkers();
