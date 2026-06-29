@@ -1,0 +1,16 @@
+{
+  "name": "Nordkapp Roadtrip",
+  "short_name": "Nordkapp",
+  "description": "Weather, stops, chargers and an AI copilot for the drive up to Nordkapp — works offline.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f7f4ef",
+  "theme_color": "#b11f4b",
+  "categories": ["travel", "navigation", "weather"],
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

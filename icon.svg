@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Nordkapp">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c1245420"/>
+      <stop offset="0" stop-color="#b11f4b"/>
+      <stop offset="1" stop-color="#7a1535"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="104" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="158" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="10"/>
+  <!-- north-pointing compass needle -->
+  <polygon points="256,86 302,256 256,228 210,256" fill="#ffffff"/>
+  <polygon points="256,426 302,256 256,284 210,256" fill="#ffffff" fill-opacity="0.42"/>
+  <circle cx="256" cy="256" r="17" fill="#ffffff"/>
+  <!-- cardinal N -->
+  <text x="256" y="74" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="46" font-weight="700" fill="#ffffff">N</text>
+</svg>

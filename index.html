@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Nordkapp Roadtrip · Weather</title>
+  <meta name="description" content="Weather, stops, chargers and an AI copilot for the drive up to Nordkapp — works offline." />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#b11f4b" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#3d3b3a" media="(prefers-color-scheme: dark)" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Nordkapp" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -22,6 +31,13 @@
         param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
       document.documentElement.setAttribute("data-theme", theme);
     })();
+  </script>
+  <script>
+    // Register the service worker so the app shell, map tiles and last-seen
+    // weather/POI data stay available offline (long no-signal stretches up north).
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+    }
   </script>
   <style>
     :root {
@@ -528,6 +544,48 @@
       .chat-panel { right: 0; bottom: 0; width: 100vw; height: 86dvh; border-radius: 18px 18px 0 0; }
       .chat-fab { right: 16px; bottom: 16px; }
     }
+
+    /* --- Offline pill (toolbar) --- */
+    .net-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 700;
+      background: var(--cp-warning); color: #1a1a1a; border: 1px solid rgba(0,0,0,.12);
+    }
+    .net-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #1a1a1a; opacity: .7; }
+    .net-pill[hidden] { display: none; }
+
+    /* --- Drive toggle active state --- */
+    button.btn[aria-pressed="true"] { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
+
+    /* --- Drive mode heads-up card --- */
+    .drive-hud {
+      position: fixed; left: 50%; bottom: 22px; z-index: 1250;
+      width: min(440px, calc(100vw - 24px));
+      transform: translateX(-50%) translateY(16px);
+      background: var(--cp-panel-strong); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+      border: 1px solid var(--cp-border); border-radius: 18px; box-shadow: var(--cp-shadow);
+      padding: 14px 16px; opacity: 0; pointer-events: none;
+      transition: opacity .2s ease, transform .2s ease;
+    }
+    .drive-hud.open { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+    .drive-hud .dh-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+    .drive-hud .dh-title { font-weight: 700; font-size: .74rem; letter-spacing: .12em; text-transform: uppercase; color: var(--cp-accent); display: flex; align-items: center; gap: 8px; }
+    .drive-hud .dh-live { width: 8px; height: 8px; border-radius: 50%; background: var(--cp-success); animation: dhpulse 1.8s infinite; }
+    @keyframes dhpulse { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,.5); } 70% { box-shadow: 0 0 0 8px rgba(34,197,94,0); } 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); } }
+    .drive-hud .dh-close { border: none; background: transparent; color: var(--cp-text-muted); font-size: 1.25rem; cursor: pointer; line-height: 1; padding: 0 6px; border-radius: 8px; }
+    .drive-hud .dh-close:hover { background: var(--cp-surface-soft); }
+    .drive-hud .dh-next { font-family: var(--font-display); font-size: 1.2rem; font-weight: 600; margin: 1px 0 3px; }
+    .drive-hud .dh-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .86rem; color: var(--cp-text-muted); }
+    .drive-hud .dh-meta b { color: var(--cp-text); font-weight: 700; }
+    .drive-hud .dh-row { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--cp-border); font-size: .86rem; display: flex; gap: 8px; align-items: flex-start; }
+    .drive-hud .dh-ic { font-size: 1rem; line-height: 1.25; }
+    .drive-hud .dh-row b { color: var(--cp-text); }
+    .drive-hud .dh-hint { font-size: .76rem; color: var(--cp-text-soft); margin-top: 9px; }
+    @media (max-width: 560px) { .drive-hud { bottom: 86px; } }
+
+    /* --- streaming caret in chat replies --- */
+    .chat-stream-caret { display: inline-block; width: 7px; height: 1.05em; vertical-align: -2px; margin-left: 1px; background: var(--cp-accent); border-radius: 1px; animation: caretblink 1s steps(2) infinite; }
+    @keyframes caretblink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
   </style>
 </head>
 <body>
@@ -539,7 +597,9 @@
         <div class="sub">Tap any stop to see its weather and what's nearby.</div>
       </div>
       <div class="toolbar">
+        <span class="net-pill" id="netPill" hidden>Offline · cached</span>
         <button class="btn icon" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">🌗</button>
+        <button class="btn" id="driveBtn" title="Live drive mode" aria-pressed="false">🧭 Drive</button>
         <button class="btn primary" id="refreshBtn" title="Refresh">↻ Refresh</button>
       </div>
     </header>
@@ -568,6 +628,14 @@
   </div>
 
   <!-- Trip Copilot — keyless AI chat (calls the managed-identity proxy) -->
+  <div class="drive-hud" id="driveHud" role="status" aria-live="polite">
+    <div class="dh-top">
+      <div class="dh-title"><span class="dh-live"></span> Drive mode</div>
+      <button class="dh-close" id="driveClose" type="button" aria-label="Exit drive mode">×</button>
+    </div>
+    <div id="driveBody"></div>
+  </div>
+
   <button class="chat-fab" id="chatFab" type="button" aria-label="Open Trip Copilot">
     <span class="fab-spark">✨</span> Ask Copilot
   </button>
@@ -1949,6 +2017,7 @@
     //  Trip Copilot — keyless AI chat (managed-identity proxy on App Service)
     // ============================================================
     const CHAT_PROXY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/chat";
+    const STREAM_PROXY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/chat/stream";
     const chatHistory = []; // {role:"user"|"assistant", content}
     let chatBusy = false;
 
@@ -2162,29 +2231,90 @@
       sendBtn.disabled = true;
       const typing = chatAdd("bot", `<span class="chat-typing"><span></span><span></span><span></span></span>`);
 
+      const payload = JSON.stringify({ messages: chatHistory.slice(-12), tripContext: buildTripContext() });
       try {
-        const r = await fetch(CHAT_PROXY_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: chatHistory.slice(-12), tripContext: buildTripContext() }),
-        });
-        const data = await r.json().catch(() => ({}));
-        typing.remove();
-        if (!r.ok || !data.reply) {
-          chatAdd("bot", `<p>Sorry — I couldn't reach the copilot just now. Please try again in a moment.</p>`, "err");
+        // Stream tokens as they arrive for a live, responsive feel.
+        const streamed = await streamChat(payload, typing);
+        if (streamed && streamed.text) {
+          chatHistory.push({ role: "assistant", content: streamed.text });
         } else {
-          const botDiv = chatAdd("bot", chatMarkdown(data.reply));
-          appendTokenNote(botDiv, data.usage);
-          chatHistory.push({ role: "assistant", content: data.reply });
+          // Streaming unavailable (older proxy / blocked) → fall back to JSON.
+          await sendChatFallback(payload, typing);
         }
       } catch {
-        typing.remove();
-        chatAdd("bot", `<p>Network hiccup — please try again.</p>`, "err");
+        try { await sendChatFallback(payload, typing); }
+        catch {
+          if (typing && typing.isConnected) typing.remove();
+          chatAdd("bot", `<p>Network hiccup — please try again.</p>`, "err");
+        }
       } finally {
         chatBusy = false;
         sendBtn.disabled = false;
         document.getElementById("chatInput").focus();
       }
+    }
+
+    // Stream the reply from the proxy and render it token-by-token. Returns
+    // { text, usage } on success, or null if the stream endpoint can't be used
+    // (the caller then falls back to the plain JSON endpoint).
+    async function streamChat(payload, typingMsg) {
+      const r = await fetch(STREAM_PROXY_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      });
+      if (!r.ok || !r.body) return null;
+      if (typingMsg && typingMsg.isConnected) typingMsg.remove();
+
+      const botDiv = chatAdd("bot", "");
+      const scroll = () => { const el = chatMsgsEl(); el.scrollTop = el.scrollHeight; };
+      let acc = "", usage = null, gotContent = false;
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      const paint = () => { botDiv.innerHTML = chatMarkdown(acc) + `<span class="chat-stream-caret"></span>`; scroll(); };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop();
+        for (const line of lines) {
+          const s = line.trim();
+          if (!s.startsWith("data:")) continue;
+          const data = s.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          let json; try { json = JSON.parse(data); } catch { continue; }
+          if (json.usage) usage = json.usage;
+          const delta = json.choices && json.choices[0] && json.choices[0].delta;
+          const piece = delta && delta.content;
+          if (piece) { acc += piece; gotContent = true; paint(); }
+        }
+      }
+      if (!gotContent) { botDiv.remove(); return null; }
+      botDiv.innerHTML = chatMarkdown(acc); // settle: drop the streaming caret
+      appendTokenNote(botDiv, usage);
+      scroll();
+      return { text: acc, usage };
+    }
+
+    // Plain JSON request — used if streaming isn't available or errors out.
+    async function sendChatFallback(payload, typingMsg) {
+      const r = await fetch(CHAT_PROXY_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      });
+      const data = await r.json().catch(() => ({}));
+      if (typingMsg && typingMsg.isConnected) typingMsg.remove();
+      if (!r.ok || !data.reply) {
+        chatAdd("bot", `<p>Sorry — I couldn't reach the copilot just now. Please try again in a moment.</p>`, "err");
+        return;
+      }
+      const botDiv = chatAdd("bot", chatMarkdown(data.reply));
+      appendTokenNote(botDiv, data.usage);
+      chatHistory.push({ role: "assistant", content: data.reply });
     }
 
     function initChat() {
@@ -2214,7 +2344,125 @@
       });
     }
 
+    // ---------------------------------------------------------------------
+    //  Drive mode — a live heads-up card for use in the car. Watches your
+    //  position, shows the nearest stop with a rough ETA, the next charger,
+    //  and that stop's current weather. Reuses the existing location plumbing.
+    // ---------------------------------------------------------------------
+    let driveWatchId = null;
+
+    function nearestOfType(pred) {
+      if (!userLoc) return null;
+      let best = null;
+      TRIP.forEach((d) => (d.stops || []).forEach((s) => {
+        if (!pred(s)) return;
+        const km = distKm(userLoc.lat, userLoc.lon, s.lat, s.lon);
+        if (!best || km < best.km) best = { stop: s, day: d, km };
+      }));
+      return best;
+    }
+
+    function etaLabel(km) {
+      const mins = Math.round((km / 70) * 60); // ~70 km/h touring average
+      if (mins < 1) return "arriving";
+      if (mins < 60) return `~${mins} min`;
+      const hh = Math.floor(mins / 60), mm = mins % 60;
+      return `~${hh} h${mm ? " " + mm + " min" : ""}`;
+    }
+
+    function driveWeatherLine(s) {
+      if (s && s._now && s._now.temp != null) {
+        return `${fmt(s._now.temp)}°C now` + (s._wx ? ` · ${fmt(s._wx.tmax)}°/${fmt(s._wx.tmin)}°` : "");
+      }
+      return null;
+    }
+
+    function renderDrive() {
+      const bodyEl = document.getElementById("driveBody");
+      if (!bodyEl) return;
+      if (!userLoc) {
+        bodyEl.innerHTML = `<div class="dh-next">Locating you…</div>` +
+          `<div class="dh-hint">Allow location to see your nearest stop, ETA and the next charger.</div>`;
+        return;
+      }
+      const near = nearestStop();
+      const charger = nearestOfType((s) => /charge|tesla|supercharg/i.test(((s.type || "") + " " + (s.name || ""))));
+      let html = "";
+      if (near) {
+        const w = driveWeatherLine(near.stop);
+        html += `<div class="dh-next">${chatEsc(near.stop.name)}</div>`;
+        html += `<div class="dh-meta"><span><b>${distLabel(near.km)}</b> away</span>` +
+          `<span>${etaLabel(near.km)}</span><span>${chatEsc(near.day.label)}</span>` +
+          (w ? `<span>${w}</span>` : "") + `</div>`;
+      } else {
+        html += `<div class="dh-next">No stops nearby</div>`;
+      }
+      if (charger && (!near || charger.stop !== near.stop)) {
+        html += `<div class="dh-row"><span class="dh-ic">⚡</span><span>Next charger: ` +
+          `<b>${chatEsc(charger.stop.name)}</b> · ${distLabel(charger.km)} · ${etaLabel(charger.km)}</span></div>`;
+      }
+      html += `<div class="dh-hint">ETA assumes ~70 km/h. Tap a stop on the map for full details.</div>`;
+      bodyEl.innerHTML = html;
+    }
+
+    function driveTick(pos) {
+      userLoc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+      if (userMarker) userMarker.setLatLng([userLoc.lat, userLoc.lon]);
+      else if (map) {
+        userMarker = L.marker([userLoc.lat, userLoc.lon], { icon: meIcon(), zIndexOffset: 1000 })
+          .bindPopup("<b>You are here</b>").addTo(map);
+      }
+      if (map) map.panTo([userLoc.lat, userLoc.lon], { animate: true });
+      renderDrive();
+      refreshChatIntro();
+    }
+
+    function startDrive() {
+      const hud = document.getElementById("driveHud");
+      const btn = document.getElementById("driveBtn");
+      hud.classList.add("open");
+      btn.setAttribute("aria-pressed", "true");
+      renderDrive();
+      if ("geolocation" in navigator) {
+        driveWatchId = navigator.geolocation.watchPosition(
+          driveTick,
+          () => renderDrive(),
+          { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+        );
+      }
+    }
+
+    function stopDrive() {
+      const hud = document.getElementById("driveHud");
+      const btn = document.getElementById("driveBtn");
+      hud.classList.remove("open");
+      btn.setAttribute("aria-pressed", "false");
+      if (driveWatchId != null && navigator.geolocation) navigator.geolocation.clearWatch(driveWatchId);
+      driveWatchId = null;
+    }
+
+    function toggleDrive() {
+      document.getElementById("driveHud").classList.contains("open") ? stopDrive() : startDrive();
+    }
+
+    // Offline awareness — show a small "Offline · cached" pill when the network drops.
+    function updateNet() {
+      const pill = document.getElementById("netPill");
+      if (pill) pill.hidden = navigator.onLine;
+    }
+
+    function initExtras() {
+      const driveBtn = document.getElementById("driveBtn");
+      if (driveBtn) driveBtn.addEventListener("click", toggleDrive);
+      const driveClose = document.getElementById("driveClose");
+      if (driveClose) driveClose.addEventListener("click", stopDrive);
+      updateNet();
+      window.addEventListener("online", updateNet);
+      window.addEventListener("offline", updateNet);
+    }
+
     initChat();
+    initExtras();
     boot();
   </script>
 </body>

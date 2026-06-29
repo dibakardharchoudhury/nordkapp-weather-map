@@ -118,10 +118,11 @@ app.get("/api/context", async (_req, res) => {
   }
 });
 
-app.post("/api/chat", chatLimiter, async (req, res) => {
-  const body = req.body || {};
+// Build the grounded message array — system prompt + authoritative TRIP DATA +
+// the client's (sanitised) user/assistant turns. Shared by the JSON and the
+// streaming chat routes so both ground identically.
+async function buildGroundedMessages(body) {
   const incoming = Array.isArray(body.messages) ? body.messages : [];
-
   // The client may only supply user/assistant turns; the system prompt is
   // server-controlled and cannot be overridden from the browser.
   const safeMessages = incoming
@@ -133,13 +134,9 @@ app.post("/api/chat", chatLimiter, async (req, res) => {
         m.content.trim()
     )
     .slice(-20);
-
-  if (!safeMessages.length) {
-    return res.status(400).json({ error: "messages[] (user/assistant) required" });
-  }
+  if (!safeMessages.length) return { error: "messages[] (user/assistant) required", status: 400 };
 
   const messages = [{ role: "system", content: SYSTEM_PROMPT }];
-
   // Ground on EXACTLY what the user sees: the client's live dataset (POIs +
   // facilities + weather, including anything loaded dynamically) is authoritative.
   // The server cache is only a fallback when the client sent no usable context
@@ -166,6 +163,14 @@ app.post("/api/chat", chatLimiter, async (req, res) => {
     });
   }
   messages.push(...safeMessages);
+  return { messages };
+}
+
+app.post("/api/chat", chatLimiter, async (req, res) => {
+  const body = req.body || {};
+  const built = await buildGroundedMessages(body);
+  if (built.error) return res.status(built.status).json({ error: built.error });
+  const messages = built.messages;
 
   const endpoint = (process.env.AOAI_ENDPOINT || "").replace(/\/$/, "");
   const model = process.env.AOAI_DEPLOYMENT || "model-router";
@@ -218,6 +223,73 @@ app.post("/api/chat", chatLimiter, async (req, res) => {
 
   const reply = data?.choices?.[0]?.message?.content ?? "";
   return res.json({ reply, usage: data?.usage ?? null });
+});
+
+// Streaming variant — identical grounding, but relays the model's tokens as they
+// arrive (Server-Sent Events) so the chat panel can render incrementally. The
+// upstream Azure OpenAI SSE frames are forwarded verbatim; the browser parses
+// `choices[0].delta.content` and the final usage chunk. Additive — the original
+// /api/chat stays the canonical JSON endpoint.
+app.post("/api/chat/stream", chatLimiter, async (req, res) => {
+  const body = req.body || {};
+  const built = await buildGroundedMessages(body);
+  if (built.error) return res.status(built.status).json({ error: built.error });
+
+  const endpoint = (process.env.AOAI_ENDPOINT || "").replace(/\/$/, "");
+  const model = process.env.AOAI_DEPLOYMENT || "model-router";
+  if (!endpoint) return res.status(500).json({ error: "AOAI_ENDPOINT not configured" });
+
+  let token;
+  try {
+    token = await getToken();
+  } catch (e) {
+    console.error("Managed-identity token acquisition failed:", e?.message || e);
+    return res.status(500).json({ error: "Auth failed (managed identity)" });
+  }
+
+  let upstream;
+  try {
+    upstream = await fetch(`${endpoint}/openai/v1/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: built.messages,
+        temperature: typeof body.temperature === "number" ? body.temperature : 0.4,
+        max_tokens: typeof body.max_tokens === "number" ? body.max_tokens : 1500,
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    });
+  } catch (e) {
+    console.error("Upstream stream fetch to Azure OpenAI failed:", e?.message || e);
+    return res.status(502).json({ error: "Upstream request failed" });
+  }
+
+  if (!upstream.ok || !upstream.body) {
+    const text = await upstream.text().catch(() => "");
+    console.error(`Azure OpenAI stream returned ${upstream.status}: ${text.slice(0, 500)}`);
+    return res.status(upstream.status || 502).json({ error: "Model call failed", detail: text.slice(0, 500) });
+  }
+
+  res.set({
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders?.();
+
+  const onClose = () => { try { upstream.body.cancel?.(); } catch { /* ignore */ } };
+  req.on("close", onClose);
+  try {
+    for await (const chunk of upstream.body) res.write(chunk);
+  } catch (e) {
+    console.error("stream relay error:", e?.message || e);
+  } finally {
+    req.off("close", onClose);
+    res.end();
+  }
 });
 
 const port = process.env.PORT || 8080;
