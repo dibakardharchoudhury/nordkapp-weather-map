@@ -3125,7 +3125,7 @@
         `<div class="tg-info"><div class="tg-name">${chatEsc(togetherName)} (you)</div><div class="tg-model">${chatEsc(me.model)}</div></div></div>`;
       const others = togetherMembers || [];
       if (!others.length) {
-        html += `<div class="tg-hint">✅ You're live and sharing your location. Family will appear here automatically as each person opens Together mode and picks their name — no need to wait for everyone.</div>`;
+        html += `<div class="tg-hint">✅ You're live and sharing your location.</div>`;
       } else {
         others.forEach((mb) => {
           const car = carForName(mb.name);
