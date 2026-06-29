@@ -146,6 +146,16 @@ async function overpass(lat, lon) {
       if (j && Array.isArray(j.elements)) return j;
     } catch { /* next mirror */ }
   }
+  // App Service egress IP can be rate-limited by the mirrors — retry via CORS
+  // proxies (different egress IP), exactly like the browser fallback.
+  const getUrl = OVERPASS_ENDPOINTS[0] + "?data=" + encodeURIComponent(overpassQuery(lat, lon));
+  for (const wrap of [(u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`]) {
+    try {
+      const r = await fetchTimed(wrap(getUrl), { headers: { "User-Agent": UA } }, 9000);
+      const j = await r.json();
+      if (j && Array.isArray(j.elements)) return j;
+    } catch { /* next proxy */ }
+  }
   return { elements: [] };
 }
 function poiFor(stop, data) {
