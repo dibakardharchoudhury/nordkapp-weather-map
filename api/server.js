@@ -121,6 +121,58 @@ app.get("/api/context", async (_req, res) => {
   }
 });
 
+// === Together mode — ephemeral live-location relay for the travelling family ===
+// In-memory ONLY (no database, nothing persisted): each member POSTs their coarse
+// GPS and we echo back the other members seen within a short TTL. Privacy by
+// design — entries self-expire, and rooms/members are capped to bound abuse. The
+// existing per-IP rate limiter (globalLimiter) protects this endpoint too.
+const TOGETHER_TTL_MS = 90_000;     // a member is "live" for 90s after their last ping
+const TOGETHER_MAX_MEMBERS = 3;     // per room — the family travels in three cars
+const TOGETHER_MAX_ROOMS = 500;
+const togetherRooms = new Map();    // room -> Map(id -> { name, lat, lng, ts })
+
+function pruneTogether(room) {
+  const m = togetherRooms.get(room);
+  if (!m) return;
+  const cutoff = Date.now() - TOGETHER_TTL_MS;
+  for (const [id, v] of m) if (v.ts < cutoff) m.delete(id);
+  if (m.size === 0) togetherRooms.delete(room);
+}
+
+const cleanRoom = (s) => (typeof s === "string" ? s.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) : "");
+const cleanMemberId = (s) => (typeof s === "string" ? s.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) : "");
+const cleanMemberName = (s) => (typeof s === "string" ? s.replace(/[<>]/g, "").trim().slice(0, 24) : "");
+const finiteIn = (n, lo, hi) => typeof n === "number" && isFinite(n) && n >= lo && n <= hi;
+
+app.post("/api/together", (req, res) => {
+  const b = req.body || {};
+  const room = cleanRoom(b.room);
+  const id = cleanMemberId(b.id);
+  if (!room || !id) return res.status(400).json({ error: "room and id required" });
+
+  // Position is optional — a member may poll for others before broadcasting (i.e.
+  // before they've opted in by entering a name). We only store a fix when present.
+  if (finiteIn(b.lat, -90, 90) && finiteIn(b.lng, -180, 180)) {
+    let m = togetherRooms.get(room);
+    if (!m) {
+      if (togetherRooms.size >= TOGETHER_MAX_ROOMS) togetherRooms.delete(togetherRooms.keys().next().value);
+      m = new Map();
+      togetherRooms.set(room, m);
+    }
+    if (!m.has(id) && m.size >= TOGETHER_MAX_MEMBERS) return res.status(429).json({ error: "room full" });
+    m.set(id, { name: cleanMemberName(b.name) || "Traveller", lat: b.lat, lng: b.lng, ts: Date.now() });
+  }
+
+  pruneTogether(room);
+  const m = togetherRooms.get(room);
+  const members = [];
+  if (m) for (const [mid, v] of m) {
+    if (mid === id) continue; // the caller already knows their own position
+    members.push({ id: mid, name: v.name, lat: v.lat, lng: v.lng, ts: v.ts });
+  }
+  res.json({ ok: true, members, serverTime: Date.now() });
+});
+
 // Sanitise one message's content. Accepts either a plain non-empty string, or a
 // multimodal array of {type:"text"} / {type:"image_url"} parts (Snap & Translate).
 // Image parts are capped (count + size, data: or https only) to bound cost/abuse.

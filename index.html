@@ -631,6 +631,35 @@
     .chat-photo:hover { color: var(--cp-accent); }
     .chat-photo.listening { color: var(--cp-accent); border-radius: 8px; animation: dhpulse 1s ease-in-out infinite; }
     .chat-img { max-width: 200px; max-height: 200px; border-radius: 10px; display: block; margin-bottom: 6px; border: 1px solid var(--cp-border); }
+
+    /* === Together mode — live family locations (Tesla fleet) === */
+    .dh-together { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--cp-border); }
+    .dh-together:empty { display: none; }
+    .dh-together .tg-h { font-size: .72rem; text-transform: uppercase; letter-spacing: .1em; color: var(--cp-text-soft); display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+    .dh-together .tg-switch { margin-left: auto; background: none; border: 1px solid var(--cp-border); color: var(--cp-text-muted); border-radius: 7px; padding: 1px 7px; font-size: .72rem; cursor: pointer; }
+    .dh-together .tg-switch:hover { color: var(--cp-accent); border-color: var(--cp-accent); }
+    .tg-cars { display: flex; flex-direction: column; gap: 9px; }
+    .tg-car { display: flex; align-items: center; gap: 10px; }
+    .tg-car-ic { width: 48px; flex: 0 0 auto; display: flex; justify-content: center; }
+    .tg-car-names { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tg-pick { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--cp-border); background: var(--cp-surface, #fff); color: var(--cp-text); border-radius: 9px; padding: 5px 11px; font-size: .84rem; font-weight: 600; cursor: pointer; }
+    .tg-pick:hover { border-color: var(--cp-accent); color: var(--cp-accent); }
+    .tg-pick .tg-on { width: 7px; height: 7px; border-radius: 50%; background: var(--cp-success, #2faf6b); box-shadow: 0 0 0 2px rgba(47,175,107,.25); }
+    .tg-pick.occupied { border-style: dashed; }
+    .tg-full { color: var(--cp-danger, #c0392b); font-size: .78rem; margin-top: 8px; }
+    .tg-hint { font-size: .74rem; color: var(--cp-text-soft); margin-top: 8px; }
+    .tg-member { display: flex; align-items: center; gap: 9px; padding: 5px 0; }
+    .tg-member .tg-mic { width: 38px; flex: 0 0 auto; display: flex; justify-content: center; }
+    .tg-member .tg-info { line-height: 1.2; }
+    .tg-member .tg-name { font-weight: 600; font-size: .9rem; }
+    .tg-member .tg-model { color: var(--cp-text-soft); font-size: .72rem; }
+    .tg-member .tg-meta { margin-left: auto; color: var(--cp-text-soft); font-size: .78rem; white-space: nowrap; text-align: right; }
+    .tg-member .tg-meta b { color: var(--cp-text); }
+    /* family car markers on the map */
+    .fam-wrap { position: relative; }
+    .fam-car { filter: drop-shadow(0 1px 3px rgba(0,0,0,.5)); }
+    .fam-car svg { display: block; }
+    .fam-label { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--cp-surface, #fff); color: var(--cp-text, #111); font-size: .66rem; font-weight: 700; padding: 1px 7px; border-radius: 8px; white-space: nowrap; border-left: 3px solid var(--c); box-shadow: 0 1px 5px rgba(0,0,0,.3); }
   </style>
 </head>
 <body>
@@ -645,7 +674,7 @@
         <span class="net-pill" id="netPill" hidden>Offline · cached</span>
         <button class="btn icon" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">🌗</button>
         <button class="btn" id="briefBtn" title="AI summary for today">✨ Today's Summary</button>
-        <button class="btn" id="driveBtn" title="Live drive mode" aria-pressed="false">🧭 Drive</button>
+        <button class="btn" id="driveBtn" title="Together mode — live family locations" aria-pressed="false">👫 Together</button>
         <button class="btn primary" id="refreshBtn" title="Refresh">↻ Refresh</button>
       </div>
     </header>
@@ -676,13 +705,14 @@
   <!-- Trip Copilot — keyless AI chat (calls the managed-identity proxy) -->
   <div class="drive-hud" id="driveHud" role="status" aria-live="polite">
     <div class="dh-top">
-      <div class="dh-title"><span class="dh-live"></span> Drive mode</div>
+      <div class="dh-title"><span class="dh-live"></span> Together mode</div>
       <div class="dh-tools">
         <button class="dh-tool" id="driveSpeak" type="button" aria-pressed="false" title="Read stops aloud" hidden>🔊</button>
       </div>
-      <button class="dh-close" id="driveClose" type="button" aria-label="Exit drive mode">×</button>
+      <button class="dh-close" id="driveClose" type="button" aria-label="Exit Together mode">×</button>
     </div>
     <div id="driveBody"></div>
+    <div id="togetherBody" class="dh-together"></div>
   </div>
 
   <button class="chat-fab" id="chatFab" type="button" aria-label="Open Trip Copilot">
@@ -2104,6 +2134,16 @@
     // ============================================================
     const CHAT_PROXY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/chat";
     const STREAM_PROXY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/chat/stream";
+    const TOGETHER_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/together";
+    const TOGETHER_ROOM = "nordkapp-fam-7e3a";  // shared family session for this trip
+    // The travelling fleet — three Teslas, two people each. Name → car + colour.
+    const TOGETHER_CARS = {
+      modelx:    { model: "Tesla Model X",             body: "#2f6fe0", window: "rgba(255,255,255,.45)", wheel: "#888888", caliper: null,      tag: "#2f6fe0" },
+      modely_lr: { model: "Tesla Model Y Long Range",  body: "#ffffff", window: "rgba(28,40,56,.55)",    wheel: "#9aa0a6", caliper: null,      tag: "#8a9097" },
+      modely_p:  { model: "Tesla Model Y Performance", body: "#ffffff", window: "rgba(28,40,56,.55)",    wheel: "#181818", caliper: "#e0252b", tag: "#e0252b" },
+    };
+    const TOGETHER_NAME_CAR = { arijit: "modelx", kamalika: "modelx", surojit: "modely_lr", pallabita: "modely_lr", dibakar: "modely_p", trisha: "modely_p" };
+    const TOGETHER_PEOPLE = [["modelx", ["Arijit", "Kamalika"]], ["modely_lr", ["Surojit", "Pallabita"]], ["modely_p", ["Dibakar", "Trisha"]]];
     const chatHistory = []; // {role:"user"|"assistant", content}
     let chatBusy = false;
 
@@ -2762,6 +2802,14 @@
     let driveWatchId = null;
     let driveHeading = null;   // degrees (0 = N, 90 = E) — direction of travel
     let driveLastFix = null;   // last fix used to derive heading from movement
+    // Together mode (live family locations) — see the Together section below.
+    let togetherName = "";
+    let togetherId = "";
+    let togetherMembers = [];   // other live members (from the relay)
+    let togetherTimer = null;
+    let togetherBusy = false;
+    let togetherFull = false;
+    let familyMarkers = {};     // member id -> Leaflet marker
 
     // All trip stops flattened in itinerary order (outbound → Nordkapp → return).
     function driveRoute() {
@@ -2860,6 +2908,7 @@
       if (!userLoc) {
         bodyEl.innerHTML = `<div class="dh-next">Locating you…</div>` +
           `<div class="dh-hint">Allow location to see your nearest stop, ETA and the next charger.</div>`;
+        renderTogether();
         return;
       }
       const near = nextAhead(null);
@@ -2881,6 +2930,7 @@
       html += `<div class="dh-hint">ETA assumes ~70 km/h. Tap a stop on the map for full details.</div>`;
       bodyEl.innerHTML = html;
       maybeSpeakDrive(near, charger); // speak the next stop aloud when voice is on
+      renderTogether();              // refresh the live family roster
     }
 
     function driveTick(pos) {
@@ -2914,6 +2964,7 @@
       hud.classList.add("open");
       btn.setAttribute("aria-pressed", "true");
       renderDrive();
+      startTogether();
       if ("geolocation" in navigator) {
         driveWatchId = navigator.geolocation.watchPosition(
           driveTick,
@@ -2932,10 +2983,176 @@
       driveWatchId = null;
       if (ttsOk) window.speechSynthesis.cancel(); // hush any spoken briefing
       lastSpokenStopName = null;
+      stopTogether();
     }
 
     function toggleDrive() {
       document.getElementById("driveHud").classList.contains("open") ? stopDrive() : startDrive();
+    }
+
+    // ===================================================================
+    //  Together mode — live family location sharing. A small fleet of three
+    //  Teslas (two people each) shares coarse GPS through the proxy's
+    //  ephemeral relay; everyone sees the others as live car pins on the map
+    //  and a roster in the HUD. Max 3 sharing at once; pick your name (or
+    //  re-pick a name already on the map to rejoin / take it over). You only
+    //  broadcast once you've chosen a name.
+    // ===================================================================
+    const slugId = (name) => "n-" + String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    function carForName(name) {
+      const key = TOGETHER_NAME_CAR[String(name || "").trim().toLowerCase()];
+      const c = key ? TOGETHER_CARS[key] : null;
+      return c ? { key, ...c } : { key: "car", model: "Car", body: "#888888", window: "rgba(28,40,56,.55)", wheel: "#bbbbbb", caliper: null, tag: "#888888" };
+    }
+    // Compact side-view Tesla silhouette. Body colour, window tint, rim colour and
+    // (optional) brake-caliper colour are per-car so each model is recognisable
+    // — e.g. white Model Y Long Range on silver wheels vs white Performance on
+    // black rims + red calipers.
+    function carSvg(car, size) {
+      const s = size || 24;
+      const wheel = (cx) => {
+        let g = `<circle cx="${cx}" cy="30" r="6.6" fill="#141414"/>` +
+                `<circle cx="${cx}" cy="30" r="3.5" fill="${car.wheel}"/>`;
+        if (car.caliper) g += `<path d="M${cx + 0.6} 26.9 A3.4 3.4 0 0 1 ${cx + 0.6} 33.1" fill="none" stroke="${car.caliper}" stroke-width="1.7" stroke-linecap="round"/>`;
+        return g;
+      };
+      return `<svg viewBox="0 0 80 40" width="${s * 2}" height="${s}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">` +
+        `<path d="M3 30 C2 24 5 21 9 20 L15 16 C17 12 21 9 26 8 L40 6 C46 5 51 7 55 11 L62 16 L66 16 C71 16 76 19 77 24 C77 27 76 30 73 30 L67 30 C67 23 59 23 59 30 L23 30 C23 23 15 23 15 30 Z" fill="${car.body}" stroke="rgba(0,0,0,.5)" stroke-width="1.3"/>` +
+        `<path d="M28 11 L44 9 L52 16 L31 16 Z" fill="${car.window}"/>` +
+        wheel(19) + wheel(63) +
+        `</svg>`;
+    }
+    function famIcon(name, car) {
+      return L.divIcon({
+        className: "",
+        html: `<div class="fam-wrap"><div class="fam-label" style="--c:${car.tag}">${chatEsc(name)}</div><div class="fam-car">${carSvg(car, 22)}</div></div>`,
+        iconSize: [50, 30], iconAnchor: [25, 22], popupAnchor: [0, -22],
+      });
+    }
+    function updateFamilyMarkers() {
+      if (!map) return;
+      const seen = new Set();
+      (togetherMembers || []).forEach((mb) => {
+        seen.add(mb.id);
+        const car = carForName(mb.name);
+        let mk = familyMarkers[mb.id];
+        if (mk) { mk.setLatLng([mb.lat, mb.lng]); mk.setIcon(famIcon(mb.name, car)); }
+        else {
+          mk = L.marker([mb.lat, mb.lng], { icon: famIcon(mb.name, car), zIndexOffset: 900 })
+            .bindPopup(`<b>${chatEsc(mb.name)}</b><br>${chatEsc(car.model)}`).addTo(map);
+          familyMarkers[mb.id] = mk;
+        }
+      });
+      Object.keys(familyMarkers).forEach((id) => {
+        if (!seen.has(id)) { try { map.removeLayer(familyMarkers[id]); } catch { /* ignore */ } delete familyMarkers[id]; }
+      });
+    }
+    function clearFamilyMarkers() {
+      Object.keys(familyMarkers).forEach((id) => { try { map.removeLayer(familyMarkers[id]); } catch { /* ignore */ } });
+      familyMarkers = {};
+    }
+    async function pushTogether() {
+      if (togetherBusy) return;
+      togetherBusy = true;
+      try {
+        const broadcasting = !!togetherName;
+        const body = { room: TOGETHER_ROOM, id: broadcasting ? togetherId : ("peek-" + (togetherId || "x")) };
+        if (broadcasting && userLoc) { body.name = togetherName; body.lat = userLoc.lat; body.lng = userLoc.lon; }
+        const r = await fetch(TOGETHER_URL, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        if (r.status === 429 && broadcasting) {
+          // Room already has 3 and this is a NEW name — bounce back to the picker.
+          togetherFull = true; togetherName = ""; togetherId = "";
+          try { localStorage.removeItem("togetherName"); } catch { /* ignore */ }
+          renderTogether();
+          return;
+        }
+        if (!r.ok) return;
+        togetherFull = false;
+        const data = await r.json();
+        togetherMembers = Array.isArray(data.members) ? data.members : [];
+        updateFamilyMarkers();
+        renderTogether();
+      } catch { /* offline — keep last known positions */ }
+      finally { togetherBusy = false; }
+    }
+    function joinTogether(name) {
+      togetherName = name;
+      togetherId = slugId(name);
+      togetherFull = false;
+      try { localStorage.setItem("togetherName", name); } catch { /* ignore */ }
+      renderTogether();
+      pushTogether();
+    }
+    function renderTogether() {
+      const el = document.getElementById("togetherBody");
+      if (!el) return;
+      // --- Not joined yet: show the name picker (three cars, two names each). ---
+      if (!togetherName) {
+        const occupied = {};
+        (togetherMembers || []).forEach((m) => { occupied[String(m.name || "").toLowerCase()] = true; });
+        const activeCount = (togetherMembers || []).length;
+        let html = `<div class="tg-h">👫 Together mode · pick your name</div><div class="tg-cars">`;
+        TOGETHER_PEOPLE.forEach(([key, names]) => {
+          const car = TOGETHER_CARS[key];
+          html += `<div class="tg-car"><div class="tg-car-ic">${carSvg(car, 20)}</div><div class="tg-car-names">`;
+          names.forEach((nm) => {
+            const occ = occupied[nm.toLowerCase()];
+            html += `<button type="button" class="tg-pick${occ ? " occupied" : ""}" data-name="${nm}" title="${car.model}${occ ? " · already in map — tap to rejoin" : ""}">` +
+              `${occ ? `<span class="tg-on"></span>` : ""}${nm}</button>`;
+          });
+          html += `</div></div>`;
+        });
+        html += `</div>`;
+        if (togetherFull) html += `<div class="tg-full">Together mode is full (3 already sharing). Pick a name already on the map to rejoin.</div>`;
+        html += `<div class="tg-hint">${activeCount ? activeCount + " sharing now. " : ""}Your live location is shared with the family only while Together mode is on.</div>`;
+        el.innerHTML = html;
+        el.querySelectorAll(".tg-pick").forEach((b) => b.addEventListener("click", () => joinTogether(b.dataset.name)));
+        return;
+      }
+      // --- Joined: show the live roster (you + the others). ---
+      const me = carForName(togetherName);
+      let html = `<div class="tg-h">👫 Family · sharing live<button id="togetherSwitch" class="tg-switch" type="button" title="Change name / rejoin">⤺ switch</button></div>`;
+      html += `<div class="tg-member"><div class="tg-mic">${carSvg(me, 17)}</div>` +
+        `<div class="tg-info"><div class="tg-name">${chatEsc(togetherName)} (you)</div><div class="tg-model">${chatEsc(me.model)}</div></div></div>`;
+      const others = togetherMembers || [];
+      if (!others.length) {
+        html += `<div class="tg-hint">Waiting for family… ask them to open Together mode and pick their name.</div>`;
+      } else {
+        others.forEach((mb) => {
+          const car = carForName(mb.name);
+          const km = userLoc ? distKm(userLoc.lat, userLoc.lon, mb.lat, mb.lng) : null;
+          const ago = Math.max(0, Math.round((Date.now() - mb.ts) / 1000));
+          const agoTxt = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
+          html += `<div class="tg-member"><div class="tg-mic">${carSvg(car, 17)}</div>` +
+            `<div class="tg-info"><div class="tg-name">${chatEsc(mb.name)}</div><div class="tg-model">${chatEsc(car.model)}</div></div>` +
+            `<div class="tg-meta">${km != null ? "<b>" + distLabel(km) + "</b><br>" : ""}${agoTxt}</div></div>`;
+        });
+      }
+      el.innerHTML = html;
+      const sw = document.getElementById("togetherSwitch");
+      if (sw) sw.addEventListener("click", () => {
+        togetherName = ""; togetherId = ""; togetherFull = false;
+        try { localStorage.removeItem("togetherName"); } catch { /* ignore */ }
+        renderTogether(); pushTogether();
+      });
+    }
+    function startTogether() {
+      try { togetherName = localStorage.getItem("togetherName") || ""; } catch { togetherName = ""; }
+      togetherId = togetherName ? slugId(togetherName) : "";
+      togetherMembers = []; togetherFull = false;
+      renderTogether();
+      pushTogether();
+      if (togetherTimer) clearInterval(togetherTimer);
+      togetherTimer = setInterval(pushTogether, 4000); // real-time heartbeat
+    }
+    function stopTogether() {
+      if (togetherTimer) { clearInterval(togetherTimer); togetherTimer = null; }
+      togetherMembers = [];
+      clearFamilyMarkers();
+      const el = document.getElementById("togetherBody");
+      if (el) el.innerHTML = "";
     }
 
     // Offline awareness — show a small "Offline · cached" pill when the network drops.
