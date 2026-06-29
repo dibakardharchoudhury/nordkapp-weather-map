@@ -3352,10 +3352,19 @@
       // --- Joined: show the live roster (you + the others). ---
       const me = carForName(togetherName);
       const youLive = !!userLoc; // we only truly broadcast once we hold a GPS fix
+      let youWhere = "";
+      if (youLive) {
+        const myPlace = famPlaceFor(userLoc.lat, userLoc.lon);
+        if (myPlace) famLastPlace["__me"] = myPlace;       // sticky while a newer fix resolves
+        const shown = myPlace || famLastPlace["__me"];
+        youWhere = shown ? `📍 ${chatEsc(shown)}` : "";
+      }
       let html = `<div class="tg-h">👫 Family · sharing live</div>`;
       html += `<div class="tg-member"><div class="tg-mic">${carSvg(me, 17)}</div>` +
         `<div class="tg-info"><div class="tg-name">${chatEsc(togetherName)} (you)</div><div class="tg-model">${chatEsc(me.model)}</div>` +
-        `<div class="tg-where">${youLive ? "🟢 sharing live" : "📡 acquiring GPS…"}</div></div></div>`;
+        `<div class="tg-where">${youLive ? "🟢 sharing live" : "📡 acquiring GPS…"}</div>` +
+        `${youWhere ? `<div class="tg-where">${youWhere}</div>` : ""}` +
+        `${youLive ? `<div class="tg-coord">${userLoc.lat.toFixed(5)}, ${userLoc.lon.toFixed(5)}</div>` : ""}</div></div>`;
       const others = togetherMembers || [];
       if (!others.length) {
         html += `<div class="tg-hint">${youLive ? "✅ You're live and sharing your location." : "📡 Acquiring your GPS… check that location permission is allowed."}</div>`;
@@ -3382,6 +3391,14 @@
               : south ? " · you're leading (north)" : "";
           }
           html += `<div class="tg-summary">📊 Family spread <b>${distLabel(spread)}</b>${standing}</div>`;
+        }
+
+        // Distances/directions are measured FROM your own position. If this device
+        // has no fix yet, say so plainly — otherwise the rows look broken (coords but
+        // no "x km"), which is exactly why a phone (GPS on) and a laptop (no GPS) show
+        // different-looking rosters for the same family.
+        if (!userLoc && located.length) {
+          html += `<div class="tg-hint">📡 Acquiring your GPS… the distance & direction to each car appear once your own location is live. Tap ⟳ above to retry, or allow location access for this site.</div>`;
         }
 
         others.forEach((mb) => {
