@@ -1974,7 +1974,8 @@
           const g = s._g;
           if (g) {
             const slim = (arr) => (arr || []).slice(0, 4).map((x) => x.name + (x.hours ? ` (${x.hours})` : ""));
-            const food = slim(g.food), shops = slim(g.shops), fuel = slim(g.fuel);
+            const slimFuel = (arr) => (arr || []).slice(0, 4).map((x) => { const ex = []; if (x.coffee) ex.push("coffee"); if (x.toilet) ex.push("toilet"); if (x.hours) ex.push(x.hours); return x.name + (ex.length ? ` (${ex.join(", ")})` : ""); });
+            const food = slim(g.food), shops = slim(g.shops), fuel = slimFuel(g.fuel);
             if (g.locality) o.area = g.locality;
             if (food.length) o.food = food;
             if (shops.length) o.groceries = shops;

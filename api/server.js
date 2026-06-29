@@ -113,19 +113,21 @@ app.post("/api/chat", async (req, res) => {
 
   const messages = [{ role: "system", content: SYSTEM_PROMPT }];
 
-  // Prefer the SERVER-cached canonical trip context so every session is grounded
-  // identically, regardless of how loaded that browser is. Fall back to whatever
-  // the client sent (or the user's live location it may add) only if the cache
-  // isn't ready yet.
-  let ctxObj = null;
-  try {
-    ctxObj = await getTripContext();
-  } catch (e) {
-    console.error("trip context fetch failed:", e?.message || e);
-  }
-  if (ctxObj == null && body.tripContext != null) ctxObj = body.tripContext;
-  if (body.tripContext && typeof body.tripContext === "object" && body.tripContext.userLocation) {
-    if (ctxObj && typeof ctxObj === "object") ctxObj.userLocation = body.tripContext.userLocation;
+  // Ground on EXACTLY what the user sees: the client's live dataset (POIs +
+  // facilities + weather, including anything loaded dynamically) is authoritative.
+  // The server cache is only a fallback when the client sent no usable context
+  // (e.g. first paint before the trip loads), so every session stays consistent.
+  const clientCtx = body.tripContext;
+  const clientHasData = clientCtx && typeof clientCtx === "object" && Array.isArray(clientCtx.days) && clientCtx.days.length;
+  let ctxObj = clientHasData ? clientCtx : null;
+  if (ctxObj == null) {
+    try {
+      ctxObj = await getTripContext();
+    } catch (e) {
+      console.error("trip context fetch failed:", e?.message || e);
+    }
+    // keep the user's live location when grounding falls back to the server cache
+    if (ctxObj && clientCtx && typeof clientCtx === "object" && clientCtx.userLocation) ctxObj.userLocation = clientCtx.userLocation;
   }
   if (ctxObj != null) {
     const ctx = typeof ctxObj === "string" ? ctxObj : JSON.stringify(ctxObj);
