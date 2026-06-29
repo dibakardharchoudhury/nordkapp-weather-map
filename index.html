@@ -2921,6 +2921,7 @@
       return formatLocality(d);
     }
     const famPlaceCache = {};
+    const famLastPlace = {}; // member id → last successfully resolved place (sticky while a newer fix loads)
     function famPlaceFor(lat, lng) {
       const key = lat.toFixed(4) + "," + lng.toFixed(4); // ~11 m — label tracks movement
       const c = famPlaceCache[key];
@@ -2932,7 +2933,16 @@
       famPlaceCache[key] = { pending: true, at: Date.now() };
       nomPool.add(async () => {
         try {
-          const d = await getJson(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&addressdetails=1&lat=${lat}&lon=${lng}`);
+          // Abort a stalled request so one hung lookup can't jam the single-slot
+          // pool and leave every car (and the prewarm) stuck on "locating…".
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 8000);
+          let d;
+          try {
+            const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&addressdetails=1&lat=${lat}&lon=${lng}`, { signal: ctrl.signal });
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            d = await r.json();
+          } finally { clearTimeout(t); }
           famPlaceCache[key] = { pending: false, at: Date.now(), text: formatPrecisePlace(d) || null };
         } catch { famPlaceCache[key] = { pending: false, at: Date.now(), text: null }; }
         if (togetherName) renderTogether(); // re-render once the real place name arrives
@@ -3271,7 +3281,9 @@
           let whereTxt = "";
           if (has) {
             const place = famPlaceFor(mb.lat, mb.lng);
-            whereTxt = place ? `📍 ${chatEsc(place)}` : `📍 locating…`;
+            if (place) famLastPlace[mb.id] = place;        // remember the last good place for this car
+            const shown = place || famLastPlace[mb.id];    // keep showing it while a newer fix resolves
+            whereTxt = shown ? `📍 ${chatEsc(shown)}` : `📍 locating…`;
           }
           const coordTxt = has ? `${mb.lat.toFixed(5)}, ${mb.lng.toFixed(5)}` : "";
           // Flag a coarse GPS fix (Wi-Fi/cell), which can place a car off by km.
