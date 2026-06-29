@@ -3318,7 +3318,11 @@
         togetherFull = false;
         const data = await r.json();
         if (!togetherActive) return; // exited during the JSON read
-        togetherMembers = Array.isArray(data.members) ? data.members : [];
+        // Drop our own entry: while sharing-but-stale (tunnel/locked) we poll under a
+        // "peek-" id, so the server can't exclude us and echoes our own lingering member
+        // back — filter it out so we never show up twice (roster + a stray map marker).
+        togetherMembers = (Array.isArray(data.members) ? data.members : [])
+          .filter((m) => !togetherId || m.id !== togetherId);
         updateFamilyMarkers();
         renderTogether();
       } catch { /* offline — keep last known positions */ }
