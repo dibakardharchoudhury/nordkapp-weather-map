@@ -2145,14 +2145,14 @@
     const STREAM_PROXY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/chat/stream";
     const TOGETHER_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/together";
     const TOGETHER_ROOM = "nordkapp-fam-7e3a";  // shared family session for this trip
-    // The travelling fleet — three Teslas, two people each. Name → car + colour.
+    // The travelling fleet — three Teslas, one person each. Name → car + colour.
     const TOGETHER_CARS = {
       modelx:    { model: "Tesla Model X",             body: "#2f6fe0", window: "rgba(255,255,255,.45)", wheel: "#888888", caliper: null,      tag: "#2f6fe0" },
       modely_lr: { model: "Tesla Model Y Long Range",  body: "#ffffff", window: "rgba(28,40,56,.55)",    wheel: "#9aa0a6", caliper: null,      tag: "#8a9097" },
       modely_p:  { model: "Tesla Model Y Performance", body: "#ffffff", window: "rgba(28,40,56,.55)",    wheel: "#181818", caliper: "#e0252b", tag: "#e0252b" },
     };
-    const TOGETHER_NAME_CAR = { arijit: "modelx", kamalika: "modelx", surojit: "modely_lr", pallabita: "modely_lr", dibakar: "modely_p", trisha: "modely_p" };
-    const TOGETHER_PEOPLE = [["modelx", ["Arijit", "Kamalika"]], ["modely_lr", ["Surojit", "Pallabita"]], ["modely_p", ["Dibakar", "Trisha"]]];
+    const TOGETHER_NAME_CAR = { arijit: "modelx", surojit: "modely_lr", dibakar: "modely_p" };
+    const TOGETHER_PEOPLE = [["modelx", ["Arijit"]], ["modely_lr", ["Surojit"]], ["modely_p", ["Dibakar"]]];
     const chatHistory = []; // {role:"user"|"assistant", content}
     let chatBusy = false;
 
@@ -3054,16 +3054,14 @@
 
     // ===================================================================
     //  Together mode — live family location sharing. A small fleet of three
-    //  Teslas (two people each) shares coarse GPS through the proxy's
+    //  Teslas (one person each) shares coarse GPS through the proxy's
     //  ephemeral relay; everyone sees the others as live car pins on the map
-    //  and a roster in the HUD. ONE SLOT PER CAR (three cars): the two people on
-    //  a car share a single live pin and GPS, so pick your name (or
-    //  re-pick a name already on the map to rejoin / take it over). You only
+    //  and a roster in the HUD. ONE SLOT PER CAR (three cars): pick your name
+    //  (or re-pick a name already on the map to rejoin / take it over). You only
     //  broadcast once you've chosen a name.
     // ===================================================================
-    // One SLOT PER CAR: both people on a car (e.g. Dibakar & Trisha) map to the
-    // SAME id, so they share one slot and one live GPS pin — picking either name
-    // joins (or takes over) that car. Three cars => at most three live pins.
+    // One SLOT PER CAR: each car has one person, mapped to its own id, so a car
+    // shows a single live GPS pin. Three cars => at most three live pins.
     const slugId = (name) => "car-" + (TOGETHER_NAME_CAR[String(name || "").trim().toLowerCase()] || "x");
     function carForName(name) {
       const key = TOGETHER_NAME_CAR[String(name || "").trim().toLowerCase()];
