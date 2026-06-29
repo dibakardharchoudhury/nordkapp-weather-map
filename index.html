@@ -209,6 +209,16 @@
     .map-body { display: flex; align-items: stretch; }
     #leaflet { flex: 1 1 auto; width: auto; min-width: 0; height: clamp(460px, 74vh, 920px); border-radius: 0; z-index: 0; background: var(--cp-surface-soft); }
     .map-head .status { margin: 0; }
+    /* Maximize map — fills the viewport (toggled from the Together HUD) so the
+       live family map isn't cramped by the page chrome / details panel. */
+    body.map-max .map-card { position: fixed; inset: 0; z-index: 900; margin: 0; border: 0; border-radius: 0; }
+    body.map-max .map-card .map-head,
+    body.map-max .map-card .legend,
+    body.map-max .details { display: none; }
+    body.map-max .map-body { height: 100dvh; }
+    body.map-max #leaflet { height: 100dvh; border-radius: 0; }
+    body.map-max .hero,
+    body.map-max footer.note { display: none; }
     .legend .rng { color: var(--cp-text); font-weight: 600; }
     .leaflet-container { font-family: inherit; }
     .pin {
@@ -716,6 +726,7 @@
       <div class="dh-title"><span class="dh-live"></span> Together mode</div>
       <div class="dh-tools">
         <button class="dh-tool" id="driveSpeak" type="button" aria-pressed="false" title="Read stops aloud" hidden>🔊</button>
+        <button class="dh-tool" id="driveMax" type="button" aria-pressed="false" title="Maximize the map (full screen)">⛶</button>
         <button class="dh-tool" id="driveMin" type="button" aria-pressed="false" title="Minimize — maximize the map">▾</button>
       </div>
       <button class="dh-close" id="driveClose" type="button" aria-label="Exit Together mode">×</button>
@@ -2820,6 +2831,7 @@
     let driveHeading = null;   // degrees (0 = N, 90 = E) — direction of travel
     let driveLastFix = null;   // last fix used to derive heading from movement
     let driveFixAt = 0;        // timestamp of the last fix we accepted (for coarse-fix rejection)
+    let driveDidCenter = false; // center the map on our position once per session, then leave it alone
     // Together mode (live family locations) — see the Together section below.
     let togetherName = "";
     let togetherId = "";
@@ -3028,7 +3040,9 @@
         userMarker = L.marker([userLoc.lat, userLoc.lon], { icon: meIcon(), zIndexOffset: 1000 })
           .bindPopup("<b>You are here</b>").addTo(map);
       }
-      if (map) map.panTo([userLoc.lat, userLoc.lon], { animate: true });
+      // Center on our position once when Together mode starts, then leave the map
+      // alone so it can be panned and zoomed freely (no forced re-centering each fix).
+      if (map && !driveDidCenter) { map.panTo([userLoc.lat, userLoc.lon], { animate: true }); driveDidCenter = true; }
       if (togetherName) pushTogether(); // broadcast our new fix immediately (real-time)
       renderDrive();
       refreshChatIntro();
@@ -3037,11 +3051,14 @@
     function startDrive() {
       const hud = document.getElementById("driveHud");
       const btn = document.getElementById("driveBtn");
-      driveHeading = null; driveLastFix = null; // re-derive direction for this session
+      driveHeading = null; driveLastFix = null; driveDidCenter = false; // re-derive direction; recenter once this session
       hud.classList.add("open");
       hud.classList.remove("minimized"); // always open expanded
+      document.body.classList.remove("map-max"); // start in the normal layout
       const minBtn = document.getElementById("driveMin");
       if (minBtn) { minBtn.setAttribute("aria-pressed", "false"); minBtn.textContent = "▾"; minBtn.title = "Minimize — maximize the map"; }
+      const maxBtn = document.getElementById("driveMax");
+      if (maxBtn) { maxBtn.setAttribute("aria-pressed", "false"); maxBtn.title = "Maximize the map (full screen)"; }
       btn.setAttribute("aria-pressed", "true");
       renderDrive();
       startTogether();
@@ -3058,6 +3075,10 @@
       const hud = document.getElementById("driveHud");
       const btn = document.getElementById("driveBtn");
       hud.classList.remove("open");
+      document.body.classList.remove("map-max"); // restore the normal layout on exit
+      const maxBtn = document.getElementById("driveMax");
+      if (maxBtn) { maxBtn.setAttribute("aria-pressed", "false"); maxBtn.title = "Maximize the map (full screen)"; }
+      if (map) setTimeout(() => map.invalidateSize({ pan: false }), 240);
       btn.setAttribute("aria-pressed", "false");
       if (driveWatchId != null && navigator.geolocation) navigator.geolocation.clearWatch(driveWatchId);
       driveWatchId = null;
@@ -3175,10 +3196,10 @@
     function renderTogether() {
       const el = document.getElementById("togetherBody");
       if (!el) return;
-      // --- Not joined yet: show the name picker (three cars, two names each). ---
+      // --- Not joined yet: show the name picker (three cars, one name each). ---
       if (!togetherName) {
-        // One slot per car: a car is "taken" if any member shares its id. Mark BOTH
-        // names on that car so picking either one joins / takes over the same slot.
+        // One slot per car. A car already shared from another device is locked —
+        // you can only pick a FREE name, never take over someone else's identity.
         const occupiedCars = {};
         (togetherMembers || []).forEach((m) => {
           const ck = (typeof m.id === "string" && m.id.indexOf("car-") === 0) ? m.id.slice(4) : null;
@@ -3192,21 +3213,21 @@
           const occ = !!activeName;
           html += `<div class="tg-car"><div class="tg-car-ic">${carSvg(car, 20)}</div><div class="tg-car-names">`;
           names.forEach((nm) => {
-            html += `<button type="button" class="tg-pick${occ ? " occupied" : ""}" data-name="${nm}" title="${car.model}${occ ? ` · ${chatEsc(activeName)} sharing — tap to take over` : ""}">` +
+            html += `<button type="button" class="tg-pick${occ ? " occupied" : ""}"${occ ? " disabled" : ""} data-name="${nm}" title="${car.model}${occ ? ` · ${chatEsc(activeName)} is already sharing from this car` : ""}">` +
               `${occ ? `<span class="tg-on"></span>` : ""}${nm}</button>`;
           });
           html += `</div></div>`;
         });
         html += `</div>`;
-        if (togetherFull) html += `<div class="tg-full">Together mode is full right now. Pick a name already on the map to rejoin.</div>`;
+        if (togetherFull) html += `<div class="tg-full">Together mode is full right now.</div>`;
         html += `<div class="tg-hint">${activeCount ? activeCount + " sharing now. " : ""}Your live location is shared with the family only while Together mode is on.</div>`;
         el.innerHTML = html;
-        el.querySelectorAll(".tg-pick").forEach((b) => b.addEventListener("click", () => joinTogether(b.dataset.name)));
+        el.querySelectorAll(".tg-pick:not([disabled])").forEach((b) => b.addEventListener("click", () => joinTogether(b.dataset.name)));
         return;
       }
       // --- Joined: show the live roster (you + the others). ---
       const me = carForName(togetherName);
-      let html = `<div class="tg-h">👫 Family · sharing live<button id="togetherSwitch" class="tg-switch" type="button" title="Change name / rejoin">⤺ switch</button></div>`;
+      let html = `<div class="tg-h">👫 Family · sharing live</div>`;
       html += `<div class="tg-member"><div class="tg-mic">${carSvg(me, 17)}</div>` +
         `<div class="tg-info"><div class="tg-name">${chatEsc(togetherName)} (you)</div><div class="tg-model">${chatEsc(me.model)}</div></div></div>`;
       const others = togetherMembers || [];
@@ -3268,12 +3289,6 @@
         });
       }
       el.innerHTML = html;
-      const sw = document.getElementById("togetherSwitch");
-      if (sw) sw.addEventListener("click", () => {
-        togetherName = ""; togetherId = ""; togetherFull = false;
-        try { localStorage.removeItem("togetherName"); } catch { /* ignore */ }
-        renderTogether(); pushTogether();
-      });
     }
     function startTogether() {
       try { togetherName = localStorage.getItem("togetherName") || ""; } catch { togetherName = ""; }
@@ -3311,6 +3326,13 @@
         driveMin.textContent = min ? "▴" : "▾";
         driveMin.title = min ? "Expand the Together panel" : "Minimize — maximize the map";
         if (map) setTimeout(() => map.invalidateSize({ pan: false }), 220);
+      });
+      const driveMax = document.getElementById("driveMax");
+      if (driveMax) driveMax.addEventListener("click", () => {
+        const on = document.body.classList.toggle("map-max");
+        driveMax.setAttribute("aria-pressed", String(on));
+        driveMax.title = on ? "Restore the map" : "Maximize the map (full screen)";
+        if (map) setTimeout(() => map.invalidateSize({ pan: false }), 240);
       });
       updateNet();
       window.addEventListener("online", updateNet);
