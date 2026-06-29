@@ -3266,14 +3266,15 @@
       try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch { /* ignore */ }
     }
     // Tell the relay we're leaving so the rest of the family sees us drop offline at
-    // once, instead of lingering for the 90s server TTL. Uses sendBeacon so it still
-    // fires while the page is being closed/backgrounded.
+    // once, instead of lingering for the 90s server TTL. Uses a keepalive fetch (not
+    // sendBeacon): sendBeacon always sends with credentials=include, which trips the
+    // relay's CORS preflight so the leave never lands. A keepalive fetch matches the
+    // working pushTogether request and still fires while the page is closing.
     function sendLeave() {
       if (!togetherId) return;
       try {
         const body = JSON.stringify({ room: TOGETHER_ROOM, id: togetherId, leave: true });
-        if (navigator.sendBeacon) navigator.sendBeacon(TOGETHER_URL, new Blob([body], { type: "application/json" }));
-        else fetch(TOGETHER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true });
+        fetch(TOGETHER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
       } catch { /* ignore */ }
     }
     async function pushTogether() {
