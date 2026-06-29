@@ -8,7 +8,7 @@
 //   • Map tiles (OpenStreetMap)                    -> cache-first (grows as you pan)
 //   • Data APIs (MET weather, Photon/Nominatim)    -> network-first, fall back to cache
 //   • Chat proxy POSTs                             -> never touched (always live)
-const VERSION = "v23";
+const VERSION = "v24";
 const SHELL_CACHE = `nordkapp-shell-${VERSION}`;
 const TILE_CACHE = `nordkapp-tiles-${VERSION}`;
 const DATA_CACHE = `nordkapp-data-${VERSION}`;

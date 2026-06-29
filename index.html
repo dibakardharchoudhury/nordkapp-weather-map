@@ -732,7 +732,7 @@
     <div class="dh-top">
       <div class="dh-title"><span class="dh-live"></span> Together mode</div>
       <div class="dh-tools">
-        <button class="dh-tool" id="driveSpeak" type="button" aria-pressed="false" title="Read stops aloud" hidden>🔊</button>
+        <button class="dh-tool" id="driveSpeak" type="button" aria-pressed="false" title="Read stops & family locations aloud" hidden>🔊</button>
         <button class="dh-tool" id="driveRefresh" type="button" title="Refresh my GPS location now">⟳</button>
         <button class="dh-tool" id="driveMax" type="button" aria-pressed="false" title="Maximize the map (full screen)">⛶</button>
         <button class="dh-tool" id="driveMin" type="button" aria-pressed="false" title="Minimize — maximize the map">▾</button>
@@ -2720,11 +2720,58 @@
       speak(parts.join(" "));
     }
 
+    // Spoken family roundup — "You are near X. Arijit is near Y, 8 kilometres to your
+    // north." Queued AFTER the next-stop line (speakMore doesn't cancel) and only
+    // re-spoken when someone reaches a new named place, so it informs without nagging.
+    let lastFamilySpokenSig = "";
+    let lastFamilySpokenAt = 0;
+    function speakMore(text) {
+      if (!ttsOk || !text) return;
+      try {
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = "en-GB"; u.rate = 1; u.pitch = 1;
+        const v = pickVoice(); if (v) u.voice = v;
+        window.speechSynthesis.speak(u); // queue after the current utterance (no cancel)
+      } catch { /* ignore */ }
+    }
+    function familySpeechText() {
+      if (!userLoc) return "";
+      const others = (togetherMembers || []).filter((m) => Number.isFinite(m.lat) && Number.isFinite(m.lng));
+      if (!others.length) return "";
+      const spokenDist = (km) => km < 1 ? `${Math.round(km * 1000)} metres` : `${km < 10 ? km.toFixed(1) : Math.round(km)} kilometres`;
+      const spokenDir = (deg) => ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"][Math.round((((deg % 360) + 360) % 360) / 45) % 8];
+      const myPlace = famPlaceFor(userLoc.lat, userLoc.lon) || famLastPlace["__me"];
+      if (myPlace) famLastPlace["__me"] = myPlace;
+      const lines = [myPlace ? `You are near ${myPlace}.` : `Here's the family.`];
+      others.forEach((m) => {
+        const place = famPlaceFor(m.lat, m.lng) || famLastPlace[m.id];
+        const km = distKm(userLoc.lat, userLoc.lon, m.lat, m.lng);
+        const dir = spokenDir(bearingDeg({ lat: userLoc.lat, lon: userLoc.lon }, { lat: m.lat, lon: m.lng }));
+        lines.push(`${place ? `${m.name} is near ${place}` : `${m.name} is`}, ${spokenDist(km)} to your ${dir}.`);
+      });
+      return lines.join(" ");
+    }
+    function maybeSpeakFamily(force) {
+      if (!voiceOn || !togetherName || !userLoc) return;
+      const others = (togetherMembers || []).filter((m) => Number.isFinite(m.lat) && Number.isFinite(m.lng));
+      if (!others.length) return;
+      const sig = (famLastPlace["__me"] || "") + "|" + others.map((m) => `${m.name}:${famLastPlace[m.id] || ""}`).join("|");
+      const now = Date.now();
+      if (!force) {
+        if (now - lastFamilySpokenAt < 20000) return;                                  // never chatter faster than 20 s
+        if (sig === lastFamilySpokenSig && now - lastFamilySpokenAt < 120000) return;   // nothing new lately
+      }
+      const txt = familySpeechText();
+      if (!txt) return;
+      lastFamilySpokenSig = sig; lastFamilySpokenAt = now;
+      speakMore(txt);
+    }
+
     function setVoice(on) {
       voiceOn = on;
       const b = document.getElementById("driveSpeak");
       if (b) b.setAttribute("aria-pressed", on ? "true" : "false");
-      if (on) { lastSpokenStopName = null; renderDrive(); }
+      if (on) { lastSpokenStopName = null; lastFamilySpokenSig = ""; renderDrive(); maybeSpeakFamily(true); }
       else if (ttsOk) window.speechSynthesis.cancel();
     }
 
@@ -3370,6 +3417,7 @@
         });
       }
       el.innerHTML = html;
+      maybeSpeakFamily(false); // read the family roundup aloud when it changes (voice mode)
     }
     function startTogether() {
       try { togetherName = localStorage.getItem("togetherName") || ""; } catch { togetherName = ""; }
