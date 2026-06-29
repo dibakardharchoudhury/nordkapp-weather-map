@@ -3423,7 +3423,7 @@
         `${youLive ? `<div class="tg-coord">${userLoc.lat.toFixed(5)}, ${userLoc.lon.toFixed(5)}</div>` : ""}</div></div>`;
       const others = togetherMembers || [];
       if (!others.length) {
-        html += `<div class="tg-hint">${youLive ? "✅ You're live and sharing your location." : "📡 Acquiring your GPS… check that location permission is allowed."}</div>`;
+        html += `<div class="tg-hint">${!youLive ? "📡 Acquiring your GPS… check that location permission is allowed." : youStale ? "📡 GPS paused — the family keeps your last spot until you reconnect." : "✅ You're live and sharing your location."}</div>`;
       } else {
         // Everyone currently sharing a fix (you + members with coords).
         const located = others.filter((mb) => Number.isFinite(mb.lat) && Number.isFinite(mb.lng));
