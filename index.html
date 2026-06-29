@@ -683,6 +683,8 @@
     .tg-member .tg-coord { color: var(--cp-text-soft); font-size: .62rem; margin-top: 1px; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; opacity: .8; letter-spacing: -.2px; }
     .tg-member .tg-meta { margin-left: auto; color: var(--cp-text-soft); font-size: .78rem; white-space: nowrap; text-align: right; }
     .tg-member .tg-meta b { color: var(--cp-text); }
+    .tg-member.stale { opacity: .55; }
+    .tg-member .tg-meta .tg-lost { color: #d08416; font-weight: 600; }
     .tg-summary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .76rem; color: var(--cp-text-soft); margin: 8px 0 2px; padding: 7px 9px; border-radius: 9px; background: var(--cp-surface-2, rgba(127,127,127,.10)); }
     .tg-summary b { color: var(--cp-text); }
     /* family car markers on the map */
@@ -2170,6 +2172,8 @@
     const STREAM_PROXY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/chat/stream";
     const TOGETHER_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/together";
     const TOGETHER_ROOM = "nordkapp-fam-7e3a";  // shared family session for this trip
+    const TOGETHER_POLL_MS = 2000;   // refresh everyone's live position about every 2 s
+    const TOGETHER_STALE_MS = 12000; // no fresh fix for >12 s ⇒ show that car as "signal lost"
     // The travelling fleet — three Teslas, one person each. Name → car + colour.
     const TOGETHER_CARS = {
       modelx:    { model: "Tesla Model X",             body: "#2f6fe0", window: "rgba(255,255,255,.45)", wheel: "#888888", caliper: null,      tag: "#2f6fe0" },
@@ -2891,6 +2895,7 @@
     let driveHeading = null;   // degrees (0 = N, 90 = E) — direction of travel
     let driveLastFix = null;   // last fix used to derive heading from movement
     let driveFixAt = 0;        // timestamp of the last fix we accepted (for coarse-fix rejection)
+    let userFixAt = 0;         // when our own location was last updated (live-vs-stale for the "you" row)
     let driveDidCenter = false; // center the map on our position once per session, then leave it alone
     // Together mode (live family locations) — see the Together section below.
     let togetherName = "";
@@ -3109,6 +3114,7 @@
         driveLastFix = next;
       }
       userLoc = next;
+      userFixAt = Date.now();
       if (userMarker) userMarker.setLatLng([userLoc.lat, userLoc.lon]);
       else if (map) {
         userMarker = L.marker([userLoc.lat, userLoc.lon], { icon: meIcon(), zIndexOffset: 1000 })
@@ -3223,6 +3229,7 @@
             .bindPopup(popup).addTo(map);
           familyMarkers[mb.id] = mk;
         }
+        try { mk.setOpacity((Date.now() - mb.ts) > TOGETHER_STALE_MS ? 0.4 : 1); } catch { /* ignore */ }
       });
       Object.keys(familyMarkers).forEach((id) => {
         if (!seen.has(id)) { try { map.removeLayer(familyMarkers[id]); } catch { /* ignore */ } delete familyMarkers[id]; }
@@ -3249,6 +3256,7 @@
           const sharperExists = userLoc && userLoc.acc != null && userLoc.acc <= 150 && acc != null && acc > 150 && !force;
           if (!sharperExists) {
             userLoc = cand;
+            userFixAt = Date.now();
             if (userMarker) userMarker.setLatLng([userLoc.lat, userLoc.lon]);
           }
           if (togetherName) pushTogether(); // register/refresh us with the family now
@@ -3282,7 +3290,10 @@
       if (togetherBusy) return;
       togetherBusy = true;
       try {
-        const broadcasting = !!togetherName;
+        // Only broadcast while the app is actually on screen — when the screen locks or
+        // the app is backgrounded we stop sharing (the family sees us drop) and resume
+        // automatically on return.
+        const broadcasting = !!togetherName && document.visibilityState !== "hidden";
         if (broadcasting && !userLoc) acquireFix(false); // no fix yet — go get one so we actually register
         const body = { room: TOGETHER_ROOM, id: broadcasting ? togetherId : ("peek-" + (togetherId || "x")) };
         if (broadcasting && userLoc) {
@@ -3393,6 +3404,7 @@
       // --- Joined: show the live roster (you + the others). ---
       const me = carForName(togetherName);
       const youLive = !!userLoc; // we only truly broadcast once we hold a GPS fix
+      const youStale = youLive && (Date.now() - userFixAt) > TOGETHER_STALE_MS; // GPS stalled (tunnel/locked)
       let youWhere = "";
       if (youLive) {
         const myPlace = famPlaceFor(userLoc.lat, userLoc.lon);
@@ -3403,7 +3415,7 @@
       let html = `<div class="tg-h">👫 Family · sharing live<button type="button" class="tg-switch" id="tgSwitch" title="Stop sharing — back to the name picker">Stop sharing</button></div>`;
       html += `<div class="tg-member"><div class="tg-mic">${carSvg(me, 17)}</div>` +
         `<div class="tg-info"><div class="tg-name">${chatEsc(togetherName)} (you)</div><div class="tg-model">${chatEsc(me.model)}</div>` +
-        `<div class="tg-where">${youLive ? "🟢 sharing live" : "📡 acquiring GPS…"}</div>` +
+        `<div class="tg-where">${!youLive ? "📡 acquiring GPS…" : youStale ? "📡 GPS paused — reconnecting…" : "🟢 sharing live"}</div>` +
         `${youWhere ? `<div class="tg-where">${youWhere}</div>` : ""}` +
         `${youLive ? `<div class="tg-coord">${userLoc.lat.toFixed(5)}, ${userLoc.lon.toFixed(5)}</div>` : ""}</div></div>`;
       const others = togetherMembers || [];
@@ -3449,6 +3461,7 @@
           const dir = (userLoc && has) ? compass16(bearingDeg({ lat: userLoc.lat, lon: userLoc.lon }, { lat: mb.lat, lon: mb.lng })) : null;
           const eta = (km != null && km > 0.5) ? Math.max(1, Math.round(km / 70 * 60)) : null;
           const ago = Math.max(0, Math.round((Date.now() - mb.ts) / 1000));
+          const stale = (Date.now() - mb.ts) > TOGETHER_STALE_MS; // no fresh fix — paused / locked / no signal
           const agoTxt = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
           // Where they actually are — precise reverse-geocoded place (road + town),
           // never an approximated "nearest stop". The exact coords are shown too.
@@ -3464,10 +3477,12 @@
           const accTxt = (has && Number.isFinite(mb.acc) && mb.acc > 150)
             ? ` · ±${mb.acc >= 1000 ? (mb.acc / 1000).toFixed(1) + " km" : Math.round(mb.acc) + " m"}`
             : "";
-          const meta = km != null
-            ? `<b>${distLabel(km)}</b>${dir ? " · " + dir : ""}${eta ? "<br>~" + eta + " min" : ""}<br><span style="font-size:.68rem">${agoTxt}</span>`
-            : agoTxt;
-          html += `<div class="tg-member"><div class="tg-mic">${carSvg(car, 17)}</div>` +
+          const meta = stale
+            ? `<span class="tg-lost">📡 signal lost</span><br><span style="font-size:.68rem">last seen ${agoTxt}</span>`
+            : (km != null
+              ? `<b>${distLabel(km)}</b>${dir ? " · " + dir : ""}${eta ? "<br>~" + eta + " min" : ""}<br><span style="font-size:.68rem">${agoTxt}</span>`
+              : agoTxt);
+          html += `<div class="tg-member${stale ? " stale" : ""}"><div class="tg-mic">${carSvg(car, 17)}</div>` +
             `<div class="tg-info"><div class="tg-name">${chatEsc(mb.name)}</div><div class="tg-model">${chatEsc(car.model)}</div>` +
             `${whereTxt ? `<div class="tg-where">${whereTxt}</div>` : ""}` +
             `${coordTxt ? `<div class="tg-coord">${coordTxt}${accTxt}</div>` : ""}</div>` +
@@ -3489,7 +3504,7 @@
       if (togetherName) acquireFix(true); // already opted in — register a fix at once
       pushTogether();
       if (togetherTimer) clearInterval(togetherTimer);
-      togetherTimer = setInterval(pushTogether, 3000); // real-time heartbeat (~3 s)
+      togetherTimer = setInterval(pushTogether, TOGETHER_POLL_MS); // refresh everyone ~every 2 s
     }
     function stopTogether() {
       togetherActive = false; // gate any in-flight async work from re-populating state after exit
@@ -3534,13 +3549,19 @@
         acquireFix(true); // force a fresh fix and broadcast it now
         setTimeout(() => driveRefresh.classList.remove("spin"), 700);
       });
-      // While Together is on, the OS pauses geolocation when the app is backgrounded
-      // or the screen sleeps. When we come back to the foreground, re-arm the screen
-      // wake lock and immediately refresh + broadcast our position.
+      // Live tracking should only happen while the app is actually on screen. The OS
+      // pauses geolocation when the app is backgrounded or the screen locks, so we drop
+      // out of the family roster at once (the rest see "left") and pause the heartbeat;
+      // returning to the foreground re-arms the wake lock and we reappear immediately.
       document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible" && togetherActive && togetherName) {
+        if (!togetherActive) return;
+        if (document.visibilityState === "hidden") {
+          if (togetherName) sendLeave();                 // tell the family we've gone offline now
+          if (togetherTimer) { clearInterval(togetherTimer); togetherTimer = null; }
+        } else {
           requestWakeLock();
-          acquireFix(true);
+          if (togetherName) acquireFix(true);            // fresh fix + broadcast so we reappear at once
+          if (!togetherTimer) togetherTimer = setInterval(pushTogether, TOGETHER_POLL_MS);
           pushTogether();
         }
       });
