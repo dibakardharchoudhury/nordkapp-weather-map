@@ -653,8 +653,11 @@
     .tg-member .tg-info { line-height: 1.2; }
     .tg-member .tg-name { font-weight: 600; font-size: .9rem; }
     .tg-member .tg-model { color: var(--cp-text-soft); font-size: .72rem; }
+    .tg-member .tg-where { color: var(--cp-text-soft); font-size: .7rem; margin-top: 1px; }
     .tg-member .tg-meta { margin-left: auto; color: var(--cp-text-soft); font-size: .78rem; white-space: nowrap; text-align: right; }
     .tg-member .tg-meta b { color: var(--cp-text); }
+    .tg-summary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .76rem; color: var(--cp-text-soft); margin: 8px 0 2px; padding: 7px 9px; border-radius: 9px; background: var(--cp-surface-2, rgba(127,127,127,.10)); }
+    .tg-summary b { color: var(--cp-text); }
     /* family car markers on the map */
     .fam-wrap { position: relative; }
     .fam-car { filter: drop-shadow(0 1px 3px rgba(0,0,0,.5)); }
@@ -2870,6 +2873,21 @@
     }
     const angDelta = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
 
+    // 16-point compass label for a bearing in degrees (for "which way is each car").
+    function compass16(deg) {
+      const dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+      return dirs[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
+    }
+    // Nearest itinerary stop to an arbitrary point — places a family member on the route.
+    function nearestStopTo(lat, lng) {
+      let best = null;
+      TRIP.forEach((d) => (d.stops || []).forEach((s) => {
+        const km = distKm(lat, lng, s.lat, s.lon);
+        if (!best || km < best.km) best = { stop: s, day: d, km };
+      }));
+      return best;
+    }
+
     // Next stop ahead in the direction of travel, chosen only from today's
     // itinerary window (see driveWindow). Until the car moves we assume the
     // outbound (northbound) heading, so on Day 1 we surface the upcoming Eidsvoll
@@ -3127,14 +3145,46 @@
       if (!others.length) {
         html += `<div class="tg-hint">✅ You're live and sharing your location.</div>`;
       } else {
+        // Everyone currently sharing a fix (you + members with coords).
+        const located = others.filter((mb) => Number.isFinite(mb.lat) && Number.isFinite(mb.lng));
+        const pos = located.map((mb) => ({ lat: mb.lat, lng: mb.lng, you: false }));
+        if (userLoc) pos.push({ lat: userLoc.lat, lng: userLoc.lon, you: true });
+
+        // Family summary — how spread out the convoy is and where you sit in it.
+        if (pos.length >= 2) {
+          let spread = 0;
+          for (let i = 0; i < pos.length; i++)
+            for (let j = i + 1; j < pos.length; j++) {
+              const d = distKm(pos[i].lat, pos[i].lng, pos[j].lat, pos[j].lng);
+              if (d > spread) spread = d;
+            }
+          let standing = "";
+          if (userLoc) {
+            const north = located.filter((m) => m.lat > userLoc.lat).length;
+            const south = located.filter((m) => m.lat < userLoc.lat).length;
+            standing = north && south ? " · you're in the middle"
+              : north ? " · you're trailing (south)"
+              : south ? " · you're leading (north)" : "";
+          }
+          html += `<div class="tg-summary">📊 Family spread <b>${distLabel(spread)}</b>${standing}</div>`;
+        }
+
         others.forEach((mb) => {
           const car = carForName(mb.name);
-          const km = userLoc ? distKm(userLoc.lat, userLoc.lon, mb.lat, mb.lng) : null;
+          const has = Number.isFinite(mb.lat) && Number.isFinite(mb.lng);
+          const km = (userLoc && has) ? distKm(userLoc.lat, userLoc.lon, mb.lat, mb.lng) : null;
+          const dir = (userLoc && has) ? compass16(bearingDeg({ lat: userLoc.lat, lon: userLoc.lon }, { lat: mb.lat, lon: mb.lng })) : null;
+          const eta = (km != null && km > 0.5) ? Math.max(1, Math.round(km / 70 * 60)) : null;
+          const ns = has ? nearestStopTo(mb.lat, mb.lng) : null;
           const ago = Math.max(0, Math.round((Date.now() - mb.ts) / 1000));
           const agoTxt = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
+          const meta = km != null
+            ? `<b>${distLabel(km)}</b>${dir ? " · " + dir : ""}${eta ? "<br>~" + eta + " min" : ""}<br><span style="font-size:.68rem">${agoTxt}</span>`
+            : agoTxt;
           html += `<div class="tg-member"><div class="tg-mic">${carSvg(car, 17)}</div>` +
-            `<div class="tg-info"><div class="tg-name">${chatEsc(mb.name)}</div><div class="tg-model">${chatEsc(car.model)}</div></div>` +
-            `<div class="tg-meta">${km != null ? "<b>" + distLabel(km) + "</b><br>" : ""}${agoTxt}</div></div>`;
+            `<div class="tg-info"><div class="tg-name">${chatEsc(mb.name)}</div><div class="tg-model">${chatEsc(car.model)}</div>` +
+            `${ns ? `<div class="tg-where">📍 near ${chatEsc(ns.stop.name)}</div>` : ""}</div>` +
+            `<div class="tg-meta">${meta}</div></div>`;
         });
       }
       el.innerHTML = html;
