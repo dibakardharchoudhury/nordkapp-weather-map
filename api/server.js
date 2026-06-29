@@ -126,16 +126,16 @@ app.get("/api/context", async (_req, res) => {
 // GPS and we echo back the other members seen within a short TTL. Privacy by
 // design — entries self-expire, and rooms/members are capped to bound abuse. The
 // existing per-IP rate limiter (globalLimiter) protects this endpoint too.
-const TOGETHER_TTL_MS = 300_000;    // a member lingers (dimmed by the client after 20s) for 5 min after their last ping — covers multi-minute tunnels & locked screens; explicit leave drops them instantly
+const TOGETHER_TTL_MS = 300_000;    // prune a member 5 min after their last CONTACT (seen). A joined car with no fresh fix (long tunnel, screen on) keepalive-pings every few sec so it never prunes and stays on the family's map (dimmed) however long the tunnel; a locked/crashed app stops pinging and drops after this grace window. Explicit leave drops instantly.
 const TOGETHER_MAX_MEMBERS = 8;     // per room — one slot per car (3 cars); headroom covers mixed app versions during rollout
 const TOGETHER_MAX_ROOMS = 500;
-const togetherRooms = new Map();    // room -> Map(id -> { name, lat, lng, ts })
+const togetherRooms = new Map();    // room -> Map(id -> { name, lat, lng, acc, ts, seen }) — ts = last fix time (drives client staleness); seen = last contact (drives TTL prune)
 
 function pruneTogether(room) {
   const m = togetherRooms.get(room);
   if (!m) return;
   const cutoff = Date.now() - TOGETHER_TTL_MS;
-  for (const [id, v] of m) if (v.ts < cutoff) m.delete(id);
+  for (const [id, v] of m) if ((v.seen ?? v.ts) < cutoff) m.delete(id);
   if (m.size === 0) togetherRooms.delete(room);
 }
 
@@ -161,7 +161,16 @@ app.post("/api/together", (req, res) => {
 
   // Position is optional — a member may poll for others before broadcasting (i.e.
   // before they've opted in by entering a name). We only store a fix when present.
-  if (finiteIn(b.lat, -90, 90) && finiteIn(b.lng, -180, 180)) {
+  const now = Date.now();
+  if (b.keepalive === true) {
+    // Keepalive — a joined car with no fresh fix (e.g. inside a long tunnel, screen on) pings
+    // under its REAL id with no coordinates to say "still here". Refresh only its `seen` so it
+    // isn't pruned, WITHOUT touching its last-known position or `ts` — the family keeps it on the
+    // map dimmed as "signal lost" for the whole tunnel, and it snaps back to live on the next fix.
+    const mm = togetherRooms.get(room);
+    const v = mm && mm.get(id);
+    if (v) v.seen = now;
+  } else if (finiteIn(b.lat, -90, 90) && finiteIn(b.lng, -180, 180)) {
     let m = togetherRooms.get(room);
     if (!m) {
       if (togetherRooms.size >= TOGETHER_MAX_ROOMS) togetherRooms.delete(togetherRooms.keys().next().value);
@@ -170,7 +179,7 @@ app.post("/api/together", (req, res) => {
     }
     if (!m.has(id) && m.size >= TOGETHER_MAX_MEMBERS) return res.status(429).json({ error: "room full" });
     const acc = finiteIn(b.acc, 0, 100000) ? b.acc : null; // GPS accuracy radius (m), if reported
-    m.set(id, { name: cleanMemberName(b.name) || "Traveller", lat: b.lat, lng: b.lng, acc, ts: Date.now() });
+    m.set(id, { name: cleanMemberName(b.name) || "Traveller", lat: b.lat, lng: b.lng, acc, ts: now, seen: now });
   }
 
   pruneTogether(room);

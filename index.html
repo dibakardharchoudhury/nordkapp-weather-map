@@ -3294,18 +3294,31 @@
       if (!togetherActive || togetherBusy) return;
       togetherBusy = true;
       try {
-        // Broadcast a live position only while the app is on screen AND we hold a recent
-        // fix. In a tunnel or with the screen locked we stop refreshing, so the family
-        // sees us fade to "signal lost" on our last-known spot (and drop only after the
-        // server's grace window) — and we rejoin automatically the instant a fresh fix returns.
+        // Broadcast a live position only while the app is on screen AND we hold a recent fix.
+        // In a long tunnel (screen on, no fix) we keepalive so the family keeps us on the map
+        // dimmed as "signal lost" for the whole tunnel; with the screen locked JS freezes, so we
+        // simply fade and drop after the server's grace window. Either way we rejoin automatically
+        // the instant a fresh fix returns.
         const wantShare = !!togetherName && document.visibilityState !== "hidden";
         if (wantShare && !userLoc) acquireFix(false); // no fix yet — go get one so we actually register
         const fixFresh = !!userLoc && (Date.now() - userFixAt) <= TOGETHER_STALE_MS;
         const broadcasting = wantShare && fixFresh;
-        const body = { room: TOGETHER_ROOM, id: broadcasting ? togetherId : ("peek-" + (togetherId || "x")) };
+        // Three request modes:
+        //  • broadcast — joined, on screen, fresh fix → send our real id + position.
+        //  • keepalive — joined, on screen, but NO fresh fix (long tunnel) → ping our real id with
+        //    no coords so the relay keeps us on the family's map (dimmed "signal lost") for the whole
+        //    tunnel, however long, instead of pruning us. A locked screen freezes JS so it never
+        //    keepalives — it still drops after the server grace window, exactly as before.
+        //  • peek — not joined yet, or backgrounded/locked → just read the others (no registration).
+        const keepalive = wantShare && !broadcasting && !!togetherId;
+        let body;
         if (broadcasting && userLoc) {
-          body.name = togetherName; body.lat = userLoc.lat; body.lng = userLoc.lon;
+          body = { room: TOGETHER_ROOM, id: togetherId, name: togetherName, lat: userLoc.lat, lng: userLoc.lon };
           if (userLoc.acc != null) body.acc = userLoc.acc; // share fix accuracy so others can judge precision
+        } else if (keepalive) {
+          body = { room: TOGETHER_ROOM, id: togetherId, keepalive: true };
+        } else {
+          body = { room: TOGETHER_ROOM, id: "peek-" + (togetherId || "x") };
         }
         const r = await fetch(TOGETHER_URL, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
