@@ -150,6 +150,15 @@ app.post("/api/together", (req, res) => {
   const id = cleanMemberId(b.id);
   if (!room || !id) return res.status(400).json({ error: "room and id required" });
 
+  // Explicit leave — when a member exits Together mode (or closes the app) we remove
+  // them at once so the rest of the family sees them drop offline immediately,
+  // instead of lingering until the 90s TTL prunes them.
+  if (b.leave === true) {
+    const mm = togetherRooms.get(room);
+    if (mm) { mm.delete(id); if (mm.size === 0) togetherRooms.delete(room); }
+    return res.json({ ok: true, members: [], serverTime: Date.now() });
+  }
+
   // Position is optional — a member may poll for others before broadcasting (i.e.
   // before they've opted in by entering a name). We only store a fix when present.
   if (finiteIn(b.lat, -90, 90) && finiteIn(b.lng, -180, 180)) {

@@ -631,6 +631,8 @@
     .dh-tool { background: none; border: 1px solid var(--cp-border); color: var(--cp-text-muted); border-radius: 8px; width: 30px; height: 28px; font-size: .92rem; cursor: pointer; line-height: 1; }
     .dh-tool[aria-pressed="true"] { color: var(--cp-accent); border-color: var(--cp-accent); background: var(--cp-surface-2, rgba(127,127,127,.1)); }
     .dh-tool.listening { animation: dhpulse 1s ease-in-out infinite; border-color: var(--cp-accent); color: var(--cp-accent); }
+    .dh-tool.spin { animation: dhspin .7s linear; }
+    @keyframes dhspin { to { transform: rotate(360deg); } }
     /* minimized Together panel — collapses to just the title bar so the map is maximized */
     .drive-hud.minimized { padding-bottom: 12px; }
     .drive-hud.minimized .dh-top { margin-bottom: 0; }
@@ -726,6 +728,7 @@
       <div class="dh-title"><span class="dh-live"></span> Together mode</div>
       <div class="dh-tools">
         <button class="dh-tool" id="driveSpeak" type="button" aria-pressed="false" title="Read stops aloud" hidden>🔊</button>
+        <button class="dh-tool" id="driveRefresh" type="button" title="Refresh my GPS location now">⟳</button>
         <button class="dh-tool" id="driveMax" type="button" aria-pressed="false" title="Maximize the map (full screen)">⛶</button>
         <button class="dh-tool" id="driveMin" type="button" aria-pressed="false" title="Minimize — maximize the map">▾</button>
       </div>
@@ -2840,6 +2843,8 @@
     let togetherBusy = false;
     let togetherFull = false;
     let familyMarkers = {};     // member id -> Leaflet marker
+    let wakeLock = null;        // Screen Wake Lock — keeps GPS flowing while Together is on
+    let lastFixReqAt = 0;       // throttle one-shot getCurrentPosition requests
 
     // All trip stops flattened in itinerary order (outbound → Nordkapp → return).
     function driveRoute() {
@@ -3072,6 +3077,7 @@
       btn.setAttribute("aria-pressed", "true");
       renderDrive();
       startTogether();
+      requestWakeLock(); // keep the screen awake so GPS keeps updating while we share
       if ("geolocation" in navigator) {
         driveWatchId = navigator.geolocation.watchPosition(
           driveTick,
@@ -3092,6 +3098,7 @@
       btn.setAttribute("aria-pressed", "false");
       if (driveWatchId != null && navigator.geolocation) navigator.geolocation.clearWatch(driveWatchId);
       driveWatchId = null;
+      releaseWakeLock();
       if (ttsOk) window.speechSynthesis.cancel(); // hush any spoken briefing
       lastSpokenStopName = null;
       stopTogether();
@@ -3166,11 +3173,57 @@
       Object.keys(familyMarkers).forEach((id) => { try { map.removeLayer(familyMarkers[id]); } catch { /* ignore */ } });
       familyMarkers = {};
     }
+    // Grab a single high-accuracy fix on demand. Together mode relies on Drive's
+    // watchPosition, but that can be slow to first-fix or paused while the screen
+    // sleeps — this guarantees we acquire a position and broadcast it (used on join,
+    // on the Refresh button, and when the app returns to the foreground).
+    function acquireFix(force) {
+      if (!("geolocation" in navigator)) return;
+      const now = Date.now();
+      if (!force && now - lastFixReqAt < 2500) return; // don't stack overlapping requests
+      lastFixReqAt = now;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const acc = (pos.coords.accuracy != null && !isNaN(pos.coords.accuracy)) ? pos.coords.accuracy : null;
+          const cand = { lat: pos.coords.latitude, lon: pos.coords.longitude, acc };
+          // Don't let a coarse one-shot clobber a sharper recent fix (unless forced).
+          const sharperExists = userLoc && userLoc.acc != null && userLoc.acc <= 150 && acc != null && acc > 150 && !force;
+          if (!sharperExists) {
+            userLoc = cand;
+            if (userMarker) userMarker.setLatLng([userLoc.lat, userLoc.lon]);
+          }
+          if (togetherName) pushTogether(); // register/refresh us with the family now
+          renderDrive();
+        },
+        () => { renderTogether(); }, // surface the "acquiring GPS…" state on failure
+        { enableHighAccuracy: true, maximumAge: force ? 0 : 5000, timeout: 15000 }
+      );
+    }
+    async function requestWakeLock() {
+      // Keep the screen awake while sharing so the OS keeps delivering GPS fixes —
+      // mobile browsers freeze JS timers and pause geolocation once the device sleeps.
+      try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch { /* unsupported / denied */ }
+    }
+    function releaseWakeLock() {
+      try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch { /* ignore */ }
+    }
+    // Tell the relay we're leaving so the rest of the family sees us drop offline at
+    // once, instead of lingering for the 90s server TTL. Uses sendBeacon so it still
+    // fires while the page is being closed/backgrounded.
+    function sendLeave() {
+      if (!togetherId) return;
+      try {
+        const body = JSON.stringify({ room: TOGETHER_ROOM, id: togetherId, leave: true });
+        if (navigator.sendBeacon) navigator.sendBeacon(TOGETHER_URL, new Blob([body], { type: "application/json" }));
+        else fetch(TOGETHER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true });
+      } catch { /* ignore */ }
+    }
     async function pushTogether() {
       if (togetherBusy) return;
       togetherBusy = true;
       try {
         const broadcasting = !!togetherName;
+        if (broadcasting && !userLoc) acquireFix(false); // no fix yet — go get one so we actually register
         const body = { room: TOGETHER_ROOM, id: broadcasting ? togetherId : ("peek-" + (togetherId || "x")) };
         if (broadcasting && userLoc) {
           body.name = togetherName; body.lat = userLoc.lat; body.lng = userLoc.lon;
@@ -3201,6 +3254,7 @@
       togetherFull = false;
       try { localStorage.setItem("togetherName", name); } catch { /* ignore */ }
       renderTogether();
+      acquireFix(true);   // grab a fix immediately so the family sees us right away
       pushTogether();
     }
     function renderTogether() {
@@ -3212,7 +3266,11 @@
         // you can only pick a FREE name, never take over someone else's identity.
         const occupiedCars = {};
         (togetherMembers || []).forEach((m) => {
-          const ck = (typeof m.id === "string" && m.id.indexOf("car-") === 0) ? m.id.slice(4) : null;
+          // Prefer the car encoded in the id ("car-<key>"); fall back to the car mapped
+          // from the name so a member on an older cached app (non-"car-" id) still
+          // lights the right slot's green dot.
+          let ck = (typeof m.id === "string" && m.id.indexOf("car-") === 0) ? m.id.slice(4) : null;
+          if (!ck) ck = TOGETHER_NAME_CAR[String(m.name || "").trim().toLowerCase()] || null;
           if (ck) occupiedCars[ck] = m.name || "Sharing";
         });
         const activeCount = (togetherMembers || []).length;
@@ -3237,12 +3295,14 @@
       }
       // --- Joined: show the live roster (you + the others). ---
       const me = carForName(togetherName);
+      const youLive = !!userLoc; // we only truly broadcast once we hold a GPS fix
       let html = `<div class="tg-h">👫 Family · sharing live</div>`;
       html += `<div class="tg-member"><div class="tg-mic">${carSvg(me, 17)}</div>` +
-        `<div class="tg-info"><div class="tg-name">${chatEsc(togetherName)} (you)</div><div class="tg-model">${chatEsc(me.model)}</div></div></div>`;
+        `<div class="tg-info"><div class="tg-name">${chatEsc(togetherName)} (you)</div><div class="tg-model">${chatEsc(me.model)}</div>` +
+        `<div class="tg-where">${youLive ? "🟢 sharing live" : "📡 acquiring GPS…"}</div></div></div>`;
       const others = togetherMembers || [];
       if (!others.length) {
-        html += `<div class="tg-hint">✅ You're live and sharing your location.</div>`;
+        html += `<div class="tg-hint">${youLive ? "✅ You're live and sharing your location." : "📡 Acquiring your GPS… check that location permission is allowed."}</div>`;
       } else {
         // Everyone currently sharing a fix (you + members with coords).
         const located = others.filter((mb) => Number.isFinite(mb.lat) && Number.isFinite(mb.lng));
@@ -3307,11 +3367,13 @@
       togetherId = togetherName ? slugId(togetherName) : "";
       togetherMembers = []; togetherFull = false;
       renderTogether();
+      if (togetherName) acquireFix(true); // already opted in — register a fix at once
       pushTogether();
       if (togetherTimer) clearInterval(togetherTimer);
       togetherTimer = setInterval(pushTogether, 3000); // real-time heartbeat (~3 s)
     }
     function stopTogether() {
+      sendLeave(); // drop us from the family roster immediately (no 90s TTL wait)
       if (togetherTimer) { clearInterval(togetherTimer); togetherTimer = null; }
       togetherMembers = [];
       clearFamilyMarkers();
@@ -3346,6 +3408,24 @@
         driveMax.title = on ? "Restore the map" : "Maximize the map (full screen)";
         if (map) setTimeout(() => map.invalidateSize({ pan: false }), 240);
       });
+      const driveRefresh = document.getElementById("driveRefresh");
+      if (driveRefresh) driveRefresh.addEventListener("click", () => {
+        driveRefresh.classList.add("spin");
+        acquireFix(true); // force a fresh fix and broadcast it now
+        setTimeout(() => driveRefresh.classList.remove("spin"), 700);
+      });
+      // While Together is on, the OS pauses geolocation when the app is backgrounded
+      // or the screen sleeps. When we come back to the foreground, re-arm the screen
+      // wake lock and immediately refresh + broadcast our position.
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible" && togetherName) {
+          requestWakeLock();
+          acquireFix(true);
+          pushTogether();
+        }
+      });
+      // Closing/hiding the app while sharing — let the family know we've gone offline.
+      window.addEventListener("pagehide", () => { if (togetherName) sendLeave(); });
       updateNet();
       window.addEventListener("online", updateNet);
       window.addEventListener("offline", updateNet);
