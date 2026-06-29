@@ -145,7 +145,7 @@ function poiFor(stop, data) {
   const pick = (a) => withinOrExpand(a).sort((x, y) => x.dist - y.dist).slice(0, 4);
   return { food: pick(food), shops: pick(shops), fuel: pick(fuel) };
 }
-// Nominatim /lookup fills opening_hours (Photon omits them). Keyless, ~1 req/s.
+// Nominatim /lookup fills opening_hours + facility tags (Photon omits them). ~1 req/s.
 async function enrichHours(items) {
   const ids = items.map((x) => x.oid).filter(Boolean).slice(0, 50);
   if (!ids.length) return;
@@ -153,10 +153,19 @@ async function enrichHours(items) {
     const url = `https://nominatim.openstreetmap.org/lookup?osm_ids=${ids.join(",")}&extratags=1&format=jsonv2`;
     const r = await fetchTimed(url, { headers: { "User-Agent": UA, Accept: "application/json" } }, 8000);
     const arr = await r.json();
-    const hrs = {};
-    for (const e of arr || []) { const k = (e.osm_type ? e.osm_type[0].toUpperCase() : "") + e.osm_id; if (e.extratags && e.extratags.opening_hours) hrs[k] = e.extratags.opening_hours; }
-    for (const x of items) { if (x.oid && hrs[x.oid]) x.hours = hrs[x.oid]; }
-  } catch { /* hours stay blank — honest gap */ }
+    const tags = {};
+    for (const e of arr || []) { const k = (e.osm_type ? e.osm_type[0].toUpperCase() : "") + e.osm_id; tags[k] = e.extratags || {}; }
+    for (const x of items) {
+      const t = x.oid && tags[x.oid]; if (!t) continue;
+      if (t.opening_hours) x.hours = t.opening_hours;
+      // Fuel facilities (evidence-based, mirrors client): staffed forecourt = has
+      // shop OR food=yes; explicit toilets/coffee tags override; automated-only = none.
+      const staffed = !!t.shop || /^(yes|cafe|true)$/i.test(t.food || "");
+      const auto = /yes/i.test(t.automated || "") || /self_service|automated/i.test(t.self_service || "");
+      x.coffee = /yes|cafe/i.test(t.coffee || "") || /cafe/i.test(t.cuisine || "") || (staffed && !auto);
+      x.toilet = /yes/i.test(t.toilets || "") || (staffed && !auto);
+    }
+  } catch { /* tags stay blank — honest gap */ }
 }
 
 // ---- Weather (MET Norway) -------------------------------------------------
@@ -198,9 +207,10 @@ async function buildTripPoi() {
         try {
           const p = poiFor(s, await photon(s.lat, s.lon));
           const all = [...p.food, ...p.shops, ...p.fuel];
-          await enrichHours(all); // one Nominatim lookup per stop fills opening_hours
-          const fmtList = (a) => a.map((x) => x.name + (x.hours ? ` (${x.hours})` : ""));
-          s.poi = { food: fmtList(p.food), shops: fmtList(p.shops), fuel: fmtList(p.fuel) };
+          await enrichHours(all); // one Nominatim lookup per stop fills hours + facilities
+          const fmt0 = (x) => x.name + (x.hours ? ` (${x.hours})` : "");
+          const fmtFuel = (x) => { const ex = []; if (x.coffee) ex.push("coffee"); if (x.toilet) ex.push("toilet"); if (x.hours) ex.push(x.hours); return x.name + (ex.length ? ` (${ex.join(", ")})` : ""); };
+          s.poi = { food: p.food.map(fmt0), shops: p.shops.map(fmt0), fuel: p.fuel.map(fmtFuel) };
         } catch { s.poi = null; }
         await sleep(1100); // gentle on Photon + Nominatim (~1 req/s)
       }
