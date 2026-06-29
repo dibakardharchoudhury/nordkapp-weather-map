@@ -586,6 +586,50 @@
     /* --- streaming caret in chat replies --- */
     .chat-stream-caret { display: inline-block; width: 7px; height: 1.05em; vertical-align: -2px; margin-left: 1px; background: var(--cp-accent); border-radius: 1px; animation: caretblink 1s steps(2) infinite; }
     @keyframes caretblink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+
+    /* === Day Briefing — AI-generated, complete day plan (bottom sheet) === */
+    .legend .lg { cursor: pointer; border-radius: 8px; padding: 2px 6px; transition: background .15s; }
+    .legend .lg:hover { background: var(--cp-surface-2, rgba(127,127,127,.12)); }
+    .brief-backdrop { position: fixed; inset: 0; background: rgba(10,8,12,.5); backdrop-filter: blur(2px); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 1200; }
+    .brief-backdrop.open { opacity: 1; pointer-events: auto; }
+    .brief-sheet { position: fixed; left: 50%; bottom: 0; transform: translate(-50%, 100%); width: min(560px, 100%); max-height: 86vh; background: var(--cp-surface, #fff); color: var(--cp-text); border-radius: 18px 18px 0 0; box-shadow: 0 -12px 40px rgba(0,0,0,.28); z-index: 1201; display: flex; flex-direction: column; transition: transform .26s cubic-bezier(.22,.61,.36,1); }
+    .brief-sheet.open { transform: translate(-50%, 0); }
+    .brief-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--cp-border); }
+    .brief-head .bh-spark { font-size: 1.15rem; }
+    .brief-head .bh-title { font-weight: 700; font-size: 1.02rem; line-height: 1.15; }
+    .brief-head .bh-sub { font-size: .78rem; color: var(--cp-text-soft); }
+    .brief-head .bh-actions { margin-left: auto; display: flex; gap: 6px; }
+    .brief-head button { background: none; border: 1px solid var(--cp-border); color: var(--cp-text-muted); border-radius: 9px; padding: 4px 9px; font-size: .82rem; cursor: pointer; }
+    .brief-head button:hover { color: var(--cp-text); border-color: var(--cp-accent); }
+    .brief-body { padding: 14px 16px 20px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    .brief-stops { margin: 0 0 12px; }
+    .brief-stops .bs-h { font-size: .76rem; text-transform: uppercase; letter-spacing: .04em; color: var(--cp-text-soft); margin-bottom: 7px; }
+    .brief-stop { display: flex; align-items: flex-start; gap: 9px; padding: 7px 0; border-top: 1px solid var(--cp-border); }
+    .brief-stop:first-of-type { border-top: 0; }
+    .brief-stop .bs-ic { font-size: 1.05rem; line-height: 1.2; }
+    .brief-stop .bs-name { font-weight: 600; }
+    .brief-stop .bs-meta { font-size: .78rem; color: var(--cp-text-soft); }
+    .brief-stop .bs-wx { font-size: .78rem; color: var(--cp-text-muted); margin-top: 1px; }
+    .brief-ai { border-top: 1px dashed var(--cp-border); padding-top: 12px; }
+    .brief-ai .chat-h, .brief-ai p, .brief-ai ul, .brief-ai ol, .brief-ai blockquote { margin: .4em 0; }
+    .brief-tokens { font-size: .72rem; color: var(--cp-text-soft); margin-top: 10px; }
+    .brief-err { color: var(--cp-danger, #c0392b); }
+    @media (max-width: 560px) { .brief-sheet { max-height: 90vh; } }
+
+    /* === Voice drive companion === */
+    .dh-tools { display: flex; gap: 6px; margin-left: auto; }
+    .dh-tool { background: none; border: 1px solid var(--cp-border); color: var(--cp-text-muted); border-radius: 8px; width: 30px; height: 28px; font-size: .92rem; cursor: pointer; line-height: 1; }
+    .dh-tool[aria-pressed="true"] { color: var(--cp-accent); border-color: var(--cp-accent); background: var(--cp-surface-2, rgba(127,127,127,.1)); }
+    .dh-tool.listening { animation: dhpulse 1s ease-in-out infinite; border-color: var(--cp-accent); color: var(--cp-accent); }
+    @keyframes dhpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(180,40,60,.4); } 50% { box-shadow: 0 0 0 5px rgba(180,40,60,0); } }
+    .dh-voice { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--cp-border); font-size: .82rem; }
+    .dh-voice .dv-q { color: var(--cp-text-soft); }
+    .dh-voice .dv-a { color: var(--cp-text); margin-top: 2px; }
+
+    /* === Copilot photo (Snap & Translate) === */
+    .chat-photo { background: none; border: 0; color: var(--cp-text-muted); font-size: 1.15rem; cursor: pointer; padding: 0 4px; align-self: flex-end; line-height: 2; }
+    .chat-photo:hover { color: var(--cp-accent); }
+    .chat-img { max-width: 200px; max-height: 200px; border-radius: 10px; display: block; margin-bottom: 6px; border: 1px solid var(--cp-border); }
   </style>
 </head>
 <body>
@@ -599,6 +643,7 @@
       <div class="toolbar">
         <span class="net-pill" id="netPill" hidden>Offline · cached</span>
         <button class="btn icon" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">🌗</button>
+        <button class="btn" id="briefBtn" title="AI briefing for the day">✨ Briefing</button>
         <button class="btn" id="driveBtn" title="Live drive mode" aria-pressed="false">🧭 Drive</button>
         <button class="btn primary" id="refreshBtn" title="Refresh">↻ Refresh</button>
       </div>
@@ -631,9 +676,14 @@
   <div class="drive-hud" id="driveHud" role="status" aria-live="polite">
     <div class="dh-top">
       <div class="dh-title"><span class="dh-live"></span> Drive mode</div>
+      <div class="dh-tools">
+        <button class="dh-tool" id="driveSpeak" type="button" aria-pressed="false" title="Read stops aloud" hidden>🔊</button>
+        <button class="dh-tool" id="driveMic" type="button" title="Ask by voice" hidden>🎙</button>
+      </div>
       <button class="dh-close" id="driveClose" type="button" aria-label="Exit drive mode">×</button>
     </div>
     <div id="driveBody"></div>
+    <div class="dh-voice" id="driveVoice" hidden></div>
   </div>
 
   <button class="chat-fab" id="chatFab" type="button" aria-label="Open Trip Copilot">
@@ -651,11 +701,30 @@
     </div>
     <div class="chat-msgs" id="chatMsgs"></div>
     <div class="chat-input">
+      <button class="chat-photo" id="chatPhoto" type="button" aria-label="Snap & translate a photo" title="Snap a sign, menu or landmark to translate">📷</button>
+      <input type="file" id="chatFile" accept="image/*" capture="environment" hidden>
       <textarea id="chatInput" rows="1" placeholder="Ask about your trip…" aria-label="Message"></textarea>
       <button class="chat-send" id="chatSend" type="button" aria-label="Send">➤</button>
     </div>
     <div class="chat-foot">AI can be wrong — weather &amp; opening hours come from your trip data.</div>
   </section>
+
+  <!-- Day Briefing — AI-generated complete plan for a single day -->
+  <div class="brief-backdrop" id="briefBackdrop"></div>
+  <div class="brief-sheet" id="briefSheet" role="dialog" aria-label="Day briefing" aria-modal="true">
+    <div class="brief-head">
+      <span class="bh-spark">✨</span>
+      <div>
+        <div class="bh-title" id="briefTitle">Day briefing</div>
+        <div class="bh-sub" id="briefSub"></div>
+      </div>
+      <div class="bh-actions">
+        <button id="briefRegen" type="button" title="Regenerate">↻</button>
+        <button id="briefClose" type="button" aria-label="Close">×</button>
+      </div>
+    </div>
+    <div class="brief-body" id="briefBody"></div>
+  </div>
 
   <script>
     // ============================================================
@@ -1750,7 +1819,7 @@
       // Legend — one entry per day with its dynamic date and (once loaded) temp range
       document.getElementById("legend").innerHTML = TRIP
         .filter((d) => d.stops.length)
-        .map((d) => `<span class="lg"><span class="sw" style="background:${DAY_COLORS[(d.day - 1) % DAY_COLORS.length]}"></span><b>${d.label}</b> · ${shortDate(d.date)}</span>`)
+        .map((d) => `<span class="lg" data-di="${d.day - 1}" role="button" tabindex="0" title="AI briefing for ${d.label}"><span class="sw" style="background:${DAY_COLORS[(d.day - 1) % DAY_COLORS.length]}"></span><b>${d.label}</b> · ${shortDate(d.date)}</span>`)
         .join("");
     }
 
@@ -2359,6 +2428,360 @@
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape" && panel.classList.contains("open")) close();
       });
+
+      // Snap & Translate — photograph a sign / menu / landmark for an AI translation.
+      const photoBtn = document.getElementById("chatPhoto");
+      const fileInput = document.getElementById("chatFile");
+      if (photoBtn && fileInput) {
+        photoBtn.addEventListener("click", () => fileInput.click());
+        fileInput.addEventListener("change", () => {
+          const f = fileInput.files && fileInput.files[0];
+          fileInput.value = "";
+          if (f) sendChatImage(f);
+        });
+      }
+    }
+
+    // ============================================================
+    //  Shared streaming helpers (used by chat, day briefings, voice)
+    // ============================================================
+    // Stream an SSE reply from the proxy and render markdown into `el` as it
+    // arrives. Returns { text, usage } or null if nothing usable came back.
+    async function streamMarkdownInto(payload, el) {
+      const r = await fetch(STREAM_PROXY_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      });
+      if (!r.ok || !r.body) return null;
+      let acc = "", usage = null, gotContent = false;
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      const paint = () => { el.innerHTML = chatMarkdown(acc) + `<span class="chat-stream-caret"></span>`; };
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop();
+        for (const line of lines) {
+          const s = line.trim();
+          if (!s.startsWith("data:")) continue;
+          const data = s.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          let json; try { json = JSON.parse(data); } catch { continue; }
+          if (json.usage) usage = json.usage;
+          const delta = json.choices && json.choices[0] && json.choices[0].delta;
+          const piece = delta && delta.content;
+          if (piece) { acc += piece; gotContent = true; paint(); }
+        }
+      }
+      if (!gotContent) return null;
+      el.innerHTML = chatMarkdown(acc);
+      return { text: acc, usage };
+    }
+
+    // Plain JSON reply (no streaming) — returns { text, usage } or null.
+    async function jsonReply(payload) {
+      const r = await fetch(CHAT_PROXY_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.reply) return null;
+      return { text: data.reply, usage: data.usage };
+    }
+
+    function usageTokenLine(usage, cls) {
+      if (!usage) return "";
+      const total = usage.total_tokens != null
+        ? usage.total_tokens
+        : ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0)) || null;
+      return total ? `<div class="${cls}">✨ ${total.toLocaleString()} tokens</div>` : "";
+    }
+
+    // ============================================================
+    //  Day Briefing — instant, complete stop list + AI narrative
+    // ============================================================
+    const briefCache = {};   // dayIndex -> { text, usage }
+    let briefDayIndex = null;
+
+    // Deterministic, never-skips list of EVERY stop for the day (shown instantly,
+    // before/independent of the AI), so sightseeing is guaranteed to be covered.
+    function briefStopsHtml(day) {
+      const stops = day.stops || [];
+      if (!stops.length) {
+        return `<div class="brief-stops"><div class="bs-h">Stops</div>` +
+          `<div class="brief-stop"><span class="bs-ic">📍</span><div><div class="bs-meta">No stops listed for this day.</div></div></div></div>`;
+      }
+      const rows = stops.map((s) => {
+        const ic = TYPE_ICON[s.type] || "📍";
+        const label = TYPE_LABEL[s.type] || "Stop";
+        const area = (s._g && s._g.locality) ? s._g.locality : "";
+        const wx = s._wx
+          ? `${s._wx.icon} ${fmt(s._wx.tmax)}°/${fmt(s._wx.tmin)}° — ${s._wx.text}`
+          : (s._now ? `${fmt(s._now.temp)}° now · ${s._now.text}` : "");
+        return `<div class="brief-stop"><span class="bs-ic">${ic}</span><div>` +
+          `<div class="bs-name">${chatEsc(s.name)}</div>` +
+          `<div class="bs-meta">${label}${area ? " · " + chatEsc(area) : ""}</div>` +
+          (wx ? `<div class="bs-wx">${chatEsc(wx)}</div>` : "") +
+          `</div></div>`;
+      }).join("");
+      const n = stops.length;
+      return `<div class="brief-stops"><div class="bs-h">📍 ${n} stop${n > 1 ? "s" : ""} on ${chatEsc(day.label)} — all listed below</div>${rows}</div>`;
+    }
+
+    // Prompt that anchors the model on THIS day and forces it to cover every stop.
+    function briefPrompt(day) {
+      const names = (day.stops || []).map((s) => `${s.name} (${TYPE_LABEL[s.type] || "stop"})`);
+      return [
+        `Give me a concise but COMPLETE briefing for ${day.label} (${ordinalDate(day.date)}) of my Nordkapp road trip.`,
+        `Use ONLY my trip data for any facts (weather, distances, drive time, chargers, opening hours).`,
+        ``,
+        `Use these short sections, in this order:`,
+        `### 🌦 Weather & what to wear`,
+        `### 🚗 Drive & timing — the day's distance/time and a sensible order to do the stops`,
+        `### ⚡ Charging plan — every charger stop today (if none, say so plainly)`,
+        `### 📍 Stops & sightseeing — list EVERY stop below, in order, each with a one-line note on what it is or what to see. Do NOT omit any stop.`,
+        ``,
+        `Every one of these ${day.label} stops MUST appear in the Stops & sightseeing list: ${names.join("; ")}.`,
+        `Keep it scannable for a narrow phone screen.`,
+      ].join("\n");
+    }
+
+    async function openBriefing(idx) {
+      if (idx == null || !TRIP[idx]) idx = currentDayIndex();
+      if (!TRIP[idx]) return;
+      briefDayIndex = idx;
+      const day = TRIP[idx];
+      document.getElementById("briefTitle").textContent = `${day.label} briefing`;
+      document.getElementById("briefSub").textContent = ordinalDate(day.date) + (day.meta ? " · " + day.meta : "");
+      const body = document.getElementById("briefBody");
+      const stopsHtml = briefStopsHtml(day);
+
+      document.getElementById("briefSheet").classList.add("open");
+      document.getElementById("briefBackdrop").classList.add("open");
+
+      // Snappy reopen: serve a cached briefing instantly.
+      if (briefCache[idx]) {
+        body.innerHTML = stopsHtml + `<div class="brief-ai">${chatMarkdown(briefCache[idx].text)}${usageTokenLine(briefCache[idx].usage, "brief-tokens")}</div>`;
+        body.scrollTop = 0;
+        return;
+      }
+
+      body.innerHTML = stopsHtml +
+        `<div class="brief-ai" id="briefAi"><span class="chat-typing"><span></span><span></span><span></span></span></div>`;
+      body.scrollTop = 0;
+      const aiEl = document.getElementById("briefAi");
+      const payload = JSON.stringify({
+        messages: [{ role: "user", content: briefPrompt(day) }],
+        tripContext: buildTripContext(),
+      });
+      try {
+        let res = await streamMarkdownInto(payload, aiEl);
+        if (!res) res = await jsonReply(payload);
+        if (res && res.text) {
+          briefCache[idx] = res;
+          aiEl.innerHTML = chatMarkdown(res.text) + usageTokenLine(res.usage, "brief-tokens");
+        } else {
+          aiEl.innerHTML = `<p class="brief-err">Couldn't generate the briefing just now — tap ↻ to retry.</p>`;
+        }
+      } catch {
+        aiEl.innerHTML = `<p class="brief-err">Network hiccup — tap ↻ to retry.</p>`;
+      }
+    }
+
+    function closeBriefing() {
+      document.getElementById("briefSheet").classList.remove("open");
+      document.getElementById("briefBackdrop").classList.remove("open");
+    }
+
+    function initBriefing() {
+      const btn = document.getElementById("briefBtn");
+      if (btn) btn.addEventListener("click", () => openBriefing(currentDayIndex()));
+      document.getElementById("briefClose").addEventListener("click", closeBriefing);
+      document.getElementById("briefBackdrop").addEventListener("click", closeBriefing);
+      document.getElementById("briefRegen").addEventListener("click", () => {
+        if (briefDayIndex != null) { delete briefCache[briefDayIndex]; openBriefing(briefDayIndex); }
+      });
+      // Tap any day in the legend to brief that day.
+      const legend = document.getElementById("legend");
+      if (legend) legend.addEventListener("click", (e) => {
+        const lg = e.target.closest(".lg");
+        if (!lg) return;
+        const di = parseInt(lg.getAttribute("data-di"), 10);
+        if (!isNaN(di)) openBriefing(di);
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && document.getElementById("briefSheet").classList.contains("open")) closeBriefing();
+      });
+    }
+
+    // ============================================================
+    //  Voice — text-to-speech briefings + voice questions (browser APIs)
+    // ============================================================
+    const ttsOk = "speechSynthesis" in window;
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let voiceOn = false;
+    let lastSpokenStopName = null;
+    let recog = null, recogActive = false;
+
+    function pickVoice() {
+      const vs = (window.speechSynthesis && window.speechSynthesis.getVoices()) || [];
+      return vs.find((v) => /en-GB/i.test(v.lang)) || vs.find((v) => /^en/i.test(v.lang)) || null;
+    }
+    function speak(text) {
+      if (!ttsOk || !text) return;
+      try {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = "en-GB"; u.rate = 1; u.pitch = 1;
+        const v = pickVoice(); if (v) u.voice = v;
+        window.speechSynthesis.speak(u);
+      } catch {}
+    }
+
+    // Announce the upcoming stop — but only when it actually changes, so we don't
+    // repeat on every GPS tick.
+    function maybeSpeakDrive(near, charger) {
+      if (!voiceOn || !near) return;
+      if (near.stop.name === lastSpokenStopName) return;
+      lastSpokenStopName = near.stop.name;
+      const parts = [
+        `Next stop: ${near.stop.name}.`,
+        `${distLabel(near.km)} away, about ${etaLabel(near.km).replace("~", "")}.`,
+      ];
+      const s = near.stop;
+      if (s._now && s._now.temp != null) parts.push(`${fmt(s._now.temp)} degrees, ${s._now.text}.`);
+      if (charger && charger.stop !== near.stop) {
+        parts.push(`Next charger ${charger.stop.name}, ${etaLabel(charger.km).replace("~", "")} away.`);
+      }
+      speak(parts.join(" "));
+    }
+
+    function setVoice(on) {
+      voiceOn = on;
+      const b = document.getElementById("driveSpeak");
+      if (b) b.setAttribute("aria-pressed", on ? "true" : "false");
+      if (on) { lastSpokenStopName = null; renderDrive(); }
+      else if (ttsOk) window.speechSynthesis.cancel();
+    }
+
+    function showVoiceQA(q, a) {
+      const el = document.getElementById("driveVoice");
+      if (!el) return;
+      el.hidden = false;
+      el.innerHTML = (q ? `<div class="dv-q">🎙 “${chatEsc(q)}”</div>` : "") +
+        (a ? `<div class="dv-a">${chatEsc(a)}</div>` : "");
+    }
+
+    async function askByVoiceText(q) {
+      if (!q) return;
+      showVoiceQA(q, "…");
+      const payload = JSON.stringify({
+        messages: [{ role: "user", content: q }],
+        tripContext: buildTripContext(),
+        max_tokens: 500,
+      });
+      let res = null;
+      try { res = await jsonReply(payload); } catch {}
+      const a = res && res.text ? res.text : "Sorry — I couldn't answer that just now.";
+      const plain = a.replace(/[#*_`>]/g, "").replace(/\n{2,}/g, ". ").replace(/\n/g, " ").trim();
+      showVoiceQA(q, plain);
+      speak(plain);
+    }
+
+    function initVoice() {
+      const sp = document.getElementById("driveSpeak");
+      if (ttsOk && sp) {
+        sp.hidden = false;
+        sp.addEventListener("click", () => setVoice(!voiceOn));
+      }
+      const mic = document.getElementById("driveMic");
+      if (SpeechRec && mic) {
+        mic.hidden = false;
+        recog = new SpeechRec();
+        recog.lang = "en-GB"; recog.interimResults = false; recog.maxAlternatives = 1;
+        recog.onresult = (e) => { askByVoiceText(e.results[0][0].transcript); };
+        recog.onend = () => { recogActive = false; mic.classList.remove("listening"); };
+        recog.onerror = () => { recogActive = false; mic.classList.remove("listening"); };
+        mic.addEventListener("click", () => {
+          if (recogActive) { try { recog.stop(); } catch {} return; }
+          try { if (ttsOk) window.speechSynthesis.cancel(); recog.start(); recogActive = true; mic.classList.add("listening"); } catch {}
+        });
+      }
+    }
+
+    // ============================================================
+    //  Snap & Translate — send a photo to the multimodal model
+    // ============================================================
+    // Downscale client-side so the base64 payload stays small.
+    function resizeImageToDataUrl(file, maxDim = 1024, quality = 0.82) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          let w = img.width, h = img.height;
+          if (w > maxDim || h > maxDim) { const s = maxDim / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+          const c = document.createElement("canvas"); c.width = w; c.height = h;
+          c.getContext("2d").drawImage(img, 0, 0, w, h);
+          try { resolve(c.toDataURL("image/jpeg", quality)); } catch (e) { reject(e); }
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image load failed")); };
+        img.src = url;
+      });
+    }
+
+    async function sendChatImage(file) {
+      if (!file || chatBusy) return;
+      let dataUrl;
+      try { dataUrl = await resizeImageToDataUrl(file); }
+      catch { chatAdd("bot", `<p>Couldn't read that image — please try another.</p>`, "err"); return; }
+
+      const intro = chatMsgsEl().querySelector(".chat-intro");
+      if (intro) intro.closest(".chat-msg").remove();
+
+      chatAdd("user", `<img class="chat-img" src="${dataUrl}" alt="Photo to translate"><div>📷 Snap &amp; translate</div>`);
+
+      chatBusy = true;
+      const sendBtn = document.getElementById("chatSend");
+      sendBtn.disabled = true;
+      const typing = chatAdd("bot", `<span class="chat-typing"><span></span><span></span><span></span></span>`);
+
+      const caption = "Translate any text in this photo to English and briefly explain what it is " +
+        "(road sign, menu, label, info board, landmark, etc.). If it's Norwegian, give the clear English meaning. " +
+        "Keep it short and scannable.";
+      const userMsg = { role: "user", content: [
+        { type: "text", text: caption },
+        { type: "image_url", image_url: { url: dataUrl } },
+      ] };
+      const messages = chatHistory.slice(-8).concat([userMsg]);
+      const payload = JSON.stringify({ messages, tripContext: buildTripContext(), max_tokens: 700 });
+
+      try {
+        const streamed = await streamChat(payload, typing);
+        if (streamed && streamed.text) {
+          chatHistory.push({ role: "user", content: "[Sent a photo to translate]" });
+          chatHistory.push({ role: "assistant", content: streamed.text });
+        } else {
+          const res = await jsonReply(payload);
+          if (typing && typing.isConnected) typing.remove();
+          if (!res || !res.text) throw new Error("no reply");
+          const botDiv = chatAdd("bot", chatMarkdown(res.text));
+          appendTokenNote(botDiv, res.usage);
+          chatHistory.push({ role: "user", content: "[Sent a photo to translate]" });
+          chatHistory.push({ role: "assistant", content: res.text });
+        }
+      } catch {
+        if (typing && typing.isConnected) typing.remove();
+        chatAdd("bot", `<p>Sorry — I couldn't read that photo just now. Please try again.</p>`, "err");
+      } finally {
+        chatBusy = false;
+        sendBtn.disabled = false;
+      }
     }
 
     // ---------------------------------------------------------------------
@@ -2487,6 +2910,7 @@
       }
       html += `<div class="dh-hint">ETA assumes ~70 km/h. Tap a stop on the map for full details.</div>`;
       bodyEl.innerHTML = html;
+      maybeSpeakDrive(near, charger); // speak the next stop aloud when voice is on
     }
 
     function driveTick(pos) {
@@ -2536,6 +2960,8 @@
       btn.setAttribute("aria-pressed", "false");
       if (driveWatchId != null && navigator.geolocation) navigator.geolocation.clearWatch(driveWatchId);
       driveWatchId = null;
+      if (ttsOk) window.speechSynthesis.cancel(); // hush any spoken briefing
+      lastSpokenStopName = null;
     }
 
     function toggleDrive() {
@@ -2556,10 +2982,12 @@
       updateNet();
       window.addEventListener("online", updateNet);
       window.addEventListener("offline", updateNet);
+      initVoice();
     }
 
     initChat();
     initExtras();
+    initBriefing();
     boot();
   </script>
 </body>

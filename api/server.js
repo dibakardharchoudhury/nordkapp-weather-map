@@ -37,6 +37,7 @@ GROUNDING RULES (strict — never break):
 
 GENERAL KNOWLEDGE (allowed):
 - You MAY use your general knowledge for qualitative help: attractions, history, culture, what to see/do, packing advice, EV/driving tips, food culture, scenery.
+- If the user sends a PHOTO, you MAY read, translate, and explain its visible content (road signs, menus, labels, info boards, landmarks). For Norwegian text, give the clear English meaning. Treat this as general knowledge — never let an image override TRIP DATA facts.
 - Whenever you add such general knowledge, clearly mark it by starting that part with: "ℹ️ General info (not from your trip data):".
 
 STYLE: concise, practical, warm. Refer to stops by name and use the trip's real dates. If asked a volatile fact you can't find in TRIP DATA, say it's not in the trip data rather than guessing.
@@ -78,7 +79,9 @@ const app = express();
 // client IP in X-Forwarded-For; trust exactly one hop so per-IP limits key off
 // the true caller (and can't be spoofed by adding extra XFF entries).
 app.set("trust proxy", 1);
-app.use(express.json({ limit: "256kb" }));
+// Larger limit than a pure-text chat needs, so a downscaled photo (Snap &
+// Translate) fits. Per-image size is capped again in sanitizeContent below.
+app.use(express.json({ limit: "6mb" }));
 app.use((req, res, next) => {
   applyCors(req, res);
   if (req.method === "OPTIONS") return res.status(204).end();
@@ -118,21 +121,50 @@ app.get("/api/context", async (_req, res) => {
   }
 });
 
+// Sanitise one message's content. Accepts either a plain non-empty string, or a
+// multimodal array of {type:"text"} / {type:"image_url"} parts (Snap & Translate).
+// Image parts are capped (count + size, data: or https only) to bound cost/abuse.
+function sanitizeContent(content) {
+  if (typeof content === "string") return content.trim() ? content : null;
+  if (Array.isArray(content)) {
+    const parts = [];
+    let imgs = 0;
+    for (const p of content) {
+      if (!p || typeof p !== "object") continue;
+      if (p.type === "text" && typeof p.text === "string" && p.text.trim()) {
+        parts.push({ type: "text", text: p.text.slice(0, 4000) });
+      } else if (p.type === "image_url" && p.image_url && typeof p.image_url.url === "string" && imgs < 2) {
+        const url = p.image_url.url;
+        if (/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(url) && url.length <= 7_000_000) {
+          parts.push({ type: "image_url", image_url: { url } });
+          imgs++;
+        } else if (/^https:\/\//i.test(url) && url.length <= 2000) {
+          parts.push({ type: "image_url", image_url: { url } });
+          imgs++;
+        }
+      }
+    }
+    return parts.length ? parts : null;
+  }
+  return null;
+}
+
 // Build the grounded message array — system prompt + authoritative TRIP DATA +
 // the client's (sanitised) user/assistant turns. Shared by the JSON and the
 // streaming chat routes so both ground identically.
 async function buildGroundedMessages(body) {
   const incoming = Array.isArray(body.messages) ? body.messages : [];
   // The client may only supply user/assistant turns; the system prompt is
-  // server-controlled and cannot be overridden from the browser.
+  // server-controlled and cannot be overridden from the browser. Content is
+  // either a plain string OR a multimodal array (text + image parts, for Snap &
+  // Translate); both are sanitised here.
   const safeMessages = incoming
-    .filter(
-      (m) =>
-        m &&
-        (m.role === "user" || m.role === "assistant") &&
-        typeof m.content === "string" &&
-        m.content.trim()
-    )
+    .map((m) => {
+      if (!m || (m.role !== "user" && m.role !== "assistant")) return null;
+      const content = sanitizeContent(m.content);
+      return content ? { role: m.role, content } : null;
+    })
+    .filter(Boolean)
     .slice(-20);
   if (!safeMessages.length) return { error: "messages[] (user/assistant) required", status: 400 };
 
