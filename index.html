@@ -1043,9 +1043,11 @@
       map = L.map("leaflet", {
         scrollWheelZoom: true,
         zoomControl: true,
-        preferCanvas: true,      // render polylines on canvas (cheaper than SVG/DOM)
+        preferCanvas: true,        // render polylines on canvas (cheaper than SVG/DOM)
+        markerZoomAnimation: false, // don't transform every pin each zoom frame — the big mobile win with 100+ markers
         zoomAnimationThreshold: 4,
         wheelDebounceTime: 60,
+        wheelPxPerZoomLevel: 120,  // fewer, larger zoom steps per wheel tick = less churn
       }).setView([66, 14], 5);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 18,
@@ -1209,7 +1211,8 @@
       return "Looking up location…";
     }
     function refreshStop(stop) {
-      if (stop._marker && stop._day) stop._marker.setPopupContent(popupHtml(stop, stop._day, stop._color));
+      // Popups are built lazily on open; only the one that's actually open needs a live refresh.
+      if (stop._marker && stop._marker.isPopupOpen()) stop._marker.getPopup().update();
       if (selected && selected.stop === stop) {
         document.getElementById("detBody").innerHTML = detailsHtml(stop, selected.day, selected.color);
       }
@@ -1714,7 +1717,12 @@
     // uncached ones fill in gently through the throttled queue, so by the time you
     // click a stop its nearby info is usually already there — and no 429 bursts.
     function prewarmPlaces() {
-      TRIP.forEach((d) => d.stops.forEach((s) => loadPlace(s)));
+      // Kick off only when the browser is idle, so the background POI fetches and
+      // their DOM updates never compete with first paint or the user's first
+      // map interaction (pan/zoom stays smooth).
+      const run = () => TRIP.forEach((d) => d.stops.forEach((s) => loadPlace(s)));
+      if ("requestIdleCallback" in window) requestIdleCallback(run, { timeout: 2500 });
+      else setTimeout(run, 1200);
     }
     function renderMap() {
       if (!map) return;
@@ -1726,7 +1734,7 @@
         const line = [];
         d.stops.forEach((s) => {
           const m = L.marker([s.lat, s.lon], { icon: pinIcon(color, TYPE_ICON[s.type] || "📍") })
-            .bindPopup(popupHtml(s, d, color));
+            .bindPopup(() => popupHtml(s, d, color)); // built lazily on open — avoids 100+ eager HTML builds per render
           m.addTo(layer);
           s._marker = m;
           s._day = d;
@@ -1948,7 +1956,7 @@
           }
           // Repaint every stop — even those past the forecast horizon — so they show current
           //  conditions and a clear message instead of a perpetual “Loading weather…”.
-          if (s._marker) s._marker.setPopupContent(popupHtml(s, d, color));
+          if (s._marker && s._marker.isPopupOpen()) s._marker.getPopup().update();
           if (selected && selected.stop === s) showDetails(s, d, color);
         });
         const rng = document.getElementById(`rng-${d.day}`);
