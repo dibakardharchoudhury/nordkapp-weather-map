@@ -666,6 +666,7 @@
        disabled rendering (desktop Chrome vs mobile Safari looked different). */
     .tg-pick.occupied, .tg-pick:disabled { border-style: dashed; opacity: .6; cursor: not-allowed; color: var(--cp-text-soft); background: transparent; }
     .tg-pick.occupied:hover, .tg-pick:disabled:hover { border-color: var(--cp-border); color: var(--cp-text-soft); }
+    .tg-pick .tg-live-tag { font-size: .58rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--cp-success, #2faf6b); }
     .tg-full { color: var(--cp-danger, #c0392b); font-size: .78rem; margin-top: 8px; }
     .tg-hint { font-size: .74rem; color: var(--cp-text-soft); margin-top: 8px; }
     .tg-member { display: flex; align-items: center; gap: 9px; padding: 5px 0; }
@@ -3285,14 +3286,18 @@
           const occ = !!activeName;
           html += `<div class="tg-car"><div class="tg-car-ic">${carSvg(car, 20)}</div><div class="tg-car-names">`;
           names.forEach((nm) => {
-            html += `<button type="button" class="tg-pick${occ ? " occupied" : ""}"${occ ? " disabled" : ""} data-name="${nm}" title="${car.model}${occ ? ` · ${chatEsc(activeName)} is already sharing from this car` : ""}">` +
-              `${occ ? `<span class="tg-on"></span>` : ""}${nm}</button>`;
+            // Occupied = this car is already live from another device. Show the reason
+            // VISIBLY (a "live" tag), not only in a hover title — phones can't hover, which
+            // is why a 2nd device sees the picker (with its own name locked) while the 1st
+            // device shows the live roster. The slot stays locked: one device per car.
+            html += `<button type="button" class="tg-pick${occ ? " occupied" : ""}"${occ ? " disabled" : ""} data-name="${chatEsc(nm)}" title="${car.model}${occ ? " · already sharing from another device" : ""}">` +
+              `${occ ? `<span class="tg-on"></span>` : ""}${chatEsc(nm)}${occ ? `<span class="tg-live-tag">live</span>` : ""}</button>`;
           });
           html += `</div></div>`;
         });
         html += `</div>`;
         if (togetherFull) html += `<div class="tg-full">Together mode is full right now.</div>`;
-        html += `<div class="tg-hint">${activeCount ? activeCount + " sharing now. " : ""}Your live location is shared with the family only while Together mode is on.</div>`;
+        html += `<div class="tg-hint">${activeCount ? `${activeCount} already sharing live from their own device. ` : ""}Pick a free name to share your location — it's visible to family only while Together mode is on.</div>`;
         el.innerHTML = html;
         el.querySelectorAll(".tg-pick:not([disabled])").forEach((b) => b.addEventListener("click", () => joinTogether(b.dataset.name)));
         return;
