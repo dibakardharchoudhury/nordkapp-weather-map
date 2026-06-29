@@ -2899,6 +2899,7 @@
     let togetherTimer = null;
     let togetherBusy = false;
     let togetherFull = false;
+    let togetherActive = false; // true only while the HUD is open & the heartbeat runs (gates async side-effects)
     let myIdentity = "";        // this device's bound person — once chosen, only this name is selectable here
     let wakeLock = null;        // Screen Wake Lock — keeps GPS flowing while Together is on
     let lastFixReqAt = 0;       // throttle one-shot getCurrentPosition requests
@@ -3289,6 +3290,7 @@
         const r = await fetch(TOGETHER_URL, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
         });
+        if (!togetherActive) return; // exited while the request was in flight — don't resurrect state
         if (r.status === 429 && broadcasting) {
           // Room already has 3 and this is a NEW name — bounce back to the picker.
           togetherFull = true; togetherName = ""; togetherId = "";
@@ -3299,6 +3301,7 @@
         if (!r.ok) return;
         togetherFull = false;
         const data = await r.json();
+        if (!togetherActive) return; // exited during the JSON read
         togetherMembers = Array.isArray(data.members) ? data.members : [];
         updateFamilyMarkers();
         renderTogether();
@@ -3316,7 +3319,15 @@
       acquireFix(true);   // grab a fix immediately so the family sees us right away
       pushTogether();
     }
-    function renderTogether() {
+    // Stop broadcasting and return to the picker, keeping this device's bound identity
+    // so you can rejoin as yourself or reset the device. The heartbeat keeps peeking,
+    // so you still see the others while you're no longer sharing your own location.
+    function leaveTogether() {
+      sendLeave();
+      togetherName = ""; togetherId = "";
+      try { localStorage.removeItem("togetherName"); } catch { /* ignore */ }
+      renderTogether();
+    }
       const el = document.getElementById("togetherBody");
       if (!el) return;
       // --- Not joined yet: show the name picker (three cars, one name each). ---
@@ -3386,7 +3397,7 @@
         const shown = myPlace || famLastPlace["__me"];
         youWhere = shown ? `📍 ${chatEsc(shown)}` : "";
       }
-      let html = `<div class="tg-h">👫 Family · sharing live</div>`;
+      let html = `<div class="tg-h">👫 Family · sharing live<button type="button" class="tg-switch" id="tgSwitch" title="Stop sharing — back to the name picker">Stop sharing</button></div>`;
       html += `<div class="tg-member"><div class="tg-mic">${carSvg(me, 17)}</div>` +
         `<div class="tg-info"><div class="tg-name">${chatEsc(togetherName)} (you)</div><div class="tg-model">${chatEsc(me.model)}</div>` +
         `<div class="tg-where">${youLive ? "🟢 sharing live" : "📡 acquiring GPS…"}</div>` +
@@ -3461,9 +3472,12 @@
         });
       }
       el.innerHTML = html;
+      const sw = document.getElementById("tgSwitch");
+      if (sw) sw.addEventListener("click", leaveTogether);
       maybeSpeakFamily(false); // read the family roundup aloud when it changes (voice mode)
     }
     function startTogether() {
+      togetherActive = true;
       try { togetherName = localStorage.getItem("togetherName") || ""; } catch { togetherName = ""; }
       try { myIdentity = localStorage.getItem("myIdentity") || ""; } catch { myIdentity = ""; }
       togetherId = togetherName ? slugId(togetherName) : "";
@@ -3475,6 +3489,7 @@
       togetherTimer = setInterval(pushTogether, 3000); // real-time heartbeat (~3 s)
     }
     function stopTogether() {
+      togetherActive = false; // gate any in-flight async work from re-populating state after exit
       sendLeave(); // drop us from the family roster immediately (no 90s TTL wait)
       if (togetherTimer) { clearInterval(togetherTimer); togetherTimer = null; }
       togetherMembers = [];
@@ -3520,14 +3535,14 @@
       // or the screen sleeps. When we come back to the foreground, re-arm the screen
       // wake lock and immediately refresh + broadcast our position.
       document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible" && togetherName) {
+        if (document.visibilityState === "visible" && togetherActive && togetherName) {
           requestWakeLock();
           acquireFix(true);
           pushTogether();
         }
       });
       // Closing/hiding the app while sharing — let the family know we've gone offline.
-      window.addEventListener("pagehide", () => { if (togetherName) sendLeave(); });
+      window.addEventListener("pagehide", () => { if (togetherActive && togetherName) sendLeave(); });
       updateNet();
       window.addEventListener("online", updateNet);
       window.addEventListener("offline", updateNet);
