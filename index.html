@@ -621,6 +621,10 @@
     .dh-tool { background: none; border: 1px solid var(--cp-border); color: var(--cp-text-muted); border-radius: 8px; width: 30px; height: 28px; font-size: .92rem; cursor: pointer; line-height: 1; }
     .dh-tool[aria-pressed="true"] { color: var(--cp-accent); border-color: var(--cp-accent); background: var(--cp-surface-2, rgba(127,127,127,.1)); }
     .dh-tool.listening { animation: dhpulse 1s ease-in-out infinite; border-color: var(--cp-accent); color: var(--cp-accent); }
+    /* minimized Together panel — collapses to just the title bar so the map is maximized */
+    .drive-hud.minimized { padding-bottom: 12px; }
+    .drive-hud.minimized .dh-top { margin-bottom: 0; }
+    .drive-hud.minimized #driveBody, .drive-hud.minimized #togetherBody { display: none; }
     @keyframes dhpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(180,40,60,.4); } 50% { box-shadow: 0 0 0 5px rgba(180,40,60,0); } }
     .dh-voice { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--cp-border); font-size: .82rem; }
     .dh-voice .dv-q { color: var(--cp-text-soft); }
@@ -711,6 +715,7 @@
       <div class="dh-title"><span class="dh-live"></span> Together mode</div>
       <div class="dh-tools">
         <button class="dh-tool" id="driveSpeak" type="button" aria-pressed="false" title="Read stops aloud" hidden>🔊</button>
+        <button class="dh-tool" id="driveMin" type="button" aria-pressed="false" title="Minimize — maximize the map">▾</button>
       </div>
       <button class="dh-close" id="driveClose" type="button" aria-label="Exit Together mode">×</button>
     </div>
@@ -2878,7 +2883,7 @@
       const dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
       return dirs[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
     }
-    // Nearest itinerary stop to an arbitrary point — places a family member on the route.
+    // Nearest itinerary stop to an arbitrary point — used only as a fallback label.
     function nearestStopTo(lat, lng) {
       let best = null;
       TRIP.forEach((d) => (d.stops || []).forEach((s) => {
@@ -2886,6 +2891,24 @@
         if (!best || km < best.km) best = { stop: s, day: d, km };
       }));
       return best;
+    }
+    // Reverse-geocode a live position to the actual town/suburb (e.g. "Lørenskog"),
+    // not the nearest trip stop. Cached per ~110 m so a parked car looks up once;
+    // returns undefined while loading, a string when known, or null if it failed.
+    const famPlaceCache = {};
+    function famPlaceFor(lat, lng) {
+      const key = lat.toFixed(3) + "," + lng.toFixed(3);
+      const c = famPlaceCache[key];
+      if (c) return c.text; // undefined while pending, string/null once resolved
+      famPlaceCache[key] = { text: undefined };
+      nomPool.add(async () => {
+        try {
+          const d = await getJson(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&lat=${lat}&lon=${lng}`);
+          famPlaceCache[key].text = formatLocality(d) || null;
+        } catch { famPlaceCache[key].text = null; }
+        if (togetherName) renderTogether(); // re-render once the real place name arrives
+      });
+      return undefined;
     }
 
     // Next stop ahead in the direction of travel, chosen only from today's
@@ -2987,6 +3010,9 @@
       const btn = document.getElementById("driveBtn");
       driveHeading = null; driveLastFix = null; // re-derive direction for this session
       hud.classList.add("open");
+      hud.classList.remove("minimized"); // always open expanded
+      const minBtn = document.getElementById("driveMin");
+      if (minBtn) { minBtn.setAttribute("aria-pressed", "false"); minBtn.textContent = "▾"; minBtn.title = "Minimize — maximize the map"; }
       btn.setAttribute("aria-pressed", "true");
       renderDrive();
       startTogether();
@@ -3175,15 +3201,23 @@
           const km = (userLoc && has) ? distKm(userLoc.lat, userLoc.lon, mb.lat, mb.lng) : null;
           const dir = (userLoc && has) ? compass16(bearingDeg({ lat: userLoc.lat, lon: userLoc.lon }, { lat: mb.lat, lon: mb.lng })) : null;
           const eta = (km != null && km > 0.5) ? Math.max(1, Math.round(km / 70 * 60)) : null;
-          const ns = has ? nearestStopTo(mb.lat, mb.lng) : null;
           const ago = Math.max(0, Math.round((Date.now() - mb.ts) / 1000));
           const agoTxt = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
+          // Where they actually are: real town/suburb, falling back to the nearest
+          // trip stop only if the reverse geocode fails.
+          let whereTxt = "";
+          if (has) {
+            const place = famPlaceFor(mb.lat, mb.lng);
+            if (place) whereTxt = `📍 ${chatEsc(place.split(",")[0].trim())}`;
+            else if (place === undefined) whereTxt = `📍 locating…`;
+            else { const ns = nearestStopTo(mb.lat, mb.lng); if (ns) whereTxt = `📍 near ${chatEsc(ns.stop.name)}`; }
+          }
           const meta = km != null
             ? `<b>${distLabel(km)}</b>${dir ? " · " + dir : ""}${eta ? "<br>~" + eta + " min" : ""}<br><span style="font-size:.68rem">${agoTxt}</span>`
             : agoTxt;
           html += `<div class="tg-member"><div class="tg-mic">${carSvg(car, 17)}</div>` +
             `<div class="tg-info"><div class="tg-name">${chatEsc(mb.name)}</div><div class="tg-model">${chatEsc(car.model)}</div>` +
-            `${ns ? `<div class="tg-where">📍 near ${chatEsc(ns.stop.name)}</div>` : ""}</div>` +
+            `${whereTxt ? `<div class="tg-where">${whereTxt}</div>` : ""}</div>` +
             `<div class="tg-meta">${meta}</div></div>`;
         });
       }
@@ -3223,6 +3257,15 @@
       if (driveBtn) driveBtn.addEventListener("click", toggleDrive);
       const driveClose = document.getElementById("driveClose");
       if (driveClose) driveClose.addEventListener("click", stopDrive);
+      const driveMin = document.getElementById("driveMin");
+      if (driveMin) driveMin.addEventListener("click", () => {
+        const hud = document.getElementById("driveHud");
+        const min = hud.classList.toggle("minimized");
+        driveMin.setAttribute("aria-pressed", String(min));
+        driveMin.textContent = min ? "▴" : "▾";
+        driveMin.title = min ? "Expand the Together panel" : "Minimize — maximize the map";
+        if (map) setTimeout(() => map.invalidateSize({ pan: false }), 220);
+      });
       updateNet();
       window.addEventListener("online", updateNet);
       window.addEventListener("offline", updateNet);
