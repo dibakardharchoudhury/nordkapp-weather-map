@@ -9,6 +9,7 @@
 
 import express from "express";
 import { DefaultAzureCredential } from "@azure/identity";
+import { getTripContext } from "./context.js";
 
 const credential = new DefaultAzureCredential();
 const SCOPE = "https://cognitiveservices.azure.com/.default";
@@ -62,7 +63,7 @@ function applyCors(req, res) {
       : ALLOWED[0] || "*";
   res.set("Access-Control-Allow-Origin", allow);
   res.set("Vary", "Origin");
-  res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.set("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
   res.set("Access-Control-Allow-Headers", "Content-Type");
   res.set("Access-Control-Max-Age", "86400");
 }
@@ -76,6 +77,19 @@ app.use((req, res, next) => {
 });
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// Shared, server-cached trip context (stops + drive + weather + POIs). Lazy +
+// stale-while-revalidate, so every session reuses the same canonical data.
+app.get("/api/context", async (_req, res) => {
+  try {
+    const ctx = await getTripContext();
+    if (!ctx) return res.status(503).json({ error: "context warming up, retry shortly" });
+    res.json(ctx);
+  } catch (e) {
+    console.error("context build failed:", e?.message || e);
+    res.status(500).json({ error: "context unavailable" });
+  }
+});
 
 app.post("/api/chat", async (req, res) => {
   const body = req.body || {};
@@ -98,9 +112,23 @@ app.post("/api/chat", async (req, res) => {
   }
 
   const messages = [{ role: "system", content: SYSTEM_PROMPT }];
-  if (body.tripContext != null) {
-    const ctx =
-      typeof body.tripContext === "string" ? body.tripContext : JSON.stringify(body.tripContext);
+
+  // Prefer the SERVER-cached canonical trip context so every session is grounded
+  // identically, regardless of how loaded that browser is. Fall back to whatever
+  // the client sent (or the user's live location it may add) only if the cache
+  // isn't ready yet.
+  let ctxObj = null;
+  try {
+    ctxObj = await getTripContext();
+  } catch (e) {
+    console.error("trip context fetch failed:", e?.message || e);
+  }
+  if (ctxObj == null && body.tripContext != null) ctxObj = body.tripContext;
+  if (body.tripContext && typeof body.tripContext === "object" && body.tripContext.userLocation) {
+    if (ctxObj && typeof ctxObj === "object") ctxObj.userLocation = body.tripContext.userLocation;
+  }
+  if (ctxObj != null) {
+    const ctx = typeof ctxObj === "string" ? ctxObj : JSON.stringify(ctxObj);
     messages.push({
       role: "system",
       content:

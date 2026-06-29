@@ -3,7 +3,7 @@ $rg  = "rg-agentmcp"
 $app = "nordkapp-ai-proxy"
 
 if (Test-Path app.zip) { Remove-Item app.zip -Force }
-Compress-Archive -Path server.js, package.json, package-lock.json -DestinationPath app.zip -Force
+Compress-Archive -Path server.js, context.js, package.json, package-lock.json -DestinationPath app.zip -Force
 "zip exit=$LASTEXITCODE"
 
 "=== deploy ==="
