@@ -53,6 +53,15 @@ async function run(iteration) {
   const ppl = Object.fromEntries(sum.byPerson.map((x) => [x.key, x.count]));
   check(ppl.Arijit === 1 && ppl.Surojit === 1 && ppl.Dibakar === 1, "byPerson has all three");
 
+  // Objective per-IP rollup (the reliable identity — independent of self-picked name)
+  const ipMap = Object.fromEntries(sum.byIp.map((x) => [x.ip, x]));
+  check(sum.byIp.length === 3, "byIp has 3 unique IPs");
+  check(ipMap["203.0.113.30"] && ipMap["203.0.113.30"].sessions === 1 && ipMap["203.0.113.30"].events === 3, "Dibakar IP rolled up: 1 session, 3 events");
+  check(ipMap["203.0.113.30"].names.includes("Dibakar") && ipMap["203.0.113.30"].deviceTypes.includes("Mobile"), "IP row carries name(s) + device type");
+  check(ipMap["203.0.113.10"] && ipMap["203.0.113.10"].events === 2, "Arijit IP has 2 events");
+  check(ipMap["203.0.113.30"].live === true, "recently-seen IP flagged live");
+  check(sum.byIp.every((r) => typeof r.firstSeen === "number" && typeof r.lastSeen === "number" && r.lastSeen >= r.firstSeen), "byIp rows carry valid timestamps");
+
   // Device-type breakdown: 2 Mobile (iPhone + Android), 1 Desktop (Win)
   const dt = Object.fromEntries(sum.byDeviceType.map((x) => [x.key, x.count]));
   check(dt.Mobile === 2 && dt.Desktop === 1, "device types split 2 mobile / 1 desktop");

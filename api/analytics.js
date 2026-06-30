@@ -181,6 +181,7 @@ export function analyticsSummary(opts = {}) {
   const byDevice = new Map(), byOS = new Map(), byBrowser = new Map(),
         byType = new Map(), byDeviceType = new Map(), byPerson = new Map(), byPage = new Map(),
         byCountry = new Map(), byCity = new Map();
+  const byIp = new Map();        // ip -> objective per-IP rollup (the reliable "who")
   const daily = new Map(), hourly = new Map(), dayHours = new Map();
   const inc = (m, k) => m.set(k, (m.get(k) || 0) + 1);
 
@@ -244,6 +245,29 @@ export function analyticsSummary(opts = {}) {
     if (geo && geo.city) inc(byCity, `${geo.city}${geo.countryCode ? ", " + geo.countryCode : ""}`);
     activeMs += Math.max(0, s.lastSeen - s.startedAt);
 
+    // Objective per-IP rollup — this is the reliable identity (the self-reported
+    // `name` can be anything the visitor picked, so we aggregate on IP instead).
+    const ipKey = s.ip && s.ip !== "unknown" ? s.ip : "unknown";
+    let ix = byIp.get(ipKey);
+    if (!ix) {
+      ix = { ip: ipKey, sessions: 0, events: 0, visitors: new Set(), names: new Set(),
+             deviceTypes: new Set(), devices: new Set(), oses: new Set(), browsers: new Set(),
+             firstSeen: s.startedAt, lastSeen: s.lastSeen, geo: geo || null, gps: s.gps || null };
+      byIp.set(ipKey, ix);
+    }
+    ix.sessions++;
+    ix.events += s.events;
+    if (s.visitorId) ix.visitors.add(s.visitorId);
+    if (s.name) ix.names.add(s.name);
+    if (s.deviceType) ix.deviceTypes.add(s.deviceType);
+    if (s.device) ix.devices.add(s.device);
+    if (s.os) ix.oses.add(s.os);
+    if (s.browser) ix.browsers.add(s.browser);
+    ix.firstSeen = Math.min(ix.firstSeen, s.startedAt);
+    ix.lastSeen = Math.max(ix.lastSeen, s.lastSeen);
+    if (geo) ix.geo = geo;
+    if (s.gps) ix.gps = s.gps;
+
     // Best-known position for the map: precise GPS if shared, else the IP city centroid.
     const lat = s.gps ? s.gps.lat : (geo ? geo.lat : null);
     const lon = s.gps ? s.gps.lng : (geo ? geo.lon : null);
@@ -290,6 +314,24 @@ export function analyticsSummary(opts = {}) {
     };
   });
 
+  // Objective "who": one row per IP, sorted by most recent activity.
+  const byIpArr = [...byIp.values()].map((x) => ({
+    ip: x.ip,
+    sessions: x.sessions,
+    events: x.events,
+    visitors: x.visitors.size,
+    names: [...x.names],
+    deviceTypes: [...x.deviceTypes],
+    devices: [...x.devices],
+    oses: [...x.oses],
+    browsers: [...x.browsers],
+    firstSeen: x.firstSeen,
+    lastSeen: x.lastSeen,
+    live: now - x.lastSeen <= LIVE_MS,
+    gps: x.gps || null,
+    geo: x.geo ? { city: x.geo.city, region: x.geo.region, country: x.geo.country, countryCode: x.geo.countryCode, isp: x.geo.isp } : null,
+  })).sort((a, b) => b.lastSeen - a.lastSeen).slice(0, 200);
+
   return {
     generatedAt: now,
     tz,
@@ -313,6 +355,7 @@ export function analyticsSummary(opts = {}) {
     byPage: topCounts(byPage),
     byCountry: topCounts(byCountry),
     byCity: topCounts(byCity),
+    byIp: byIpArr,
     recent,
   };
 }

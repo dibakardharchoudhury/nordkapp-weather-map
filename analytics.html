@@ -164,7 +164,7 @@
 
       <div class="grid two">
         <div class="panel small"><h2>Device type</h2><div class="chart-box"><canvas id="deviceTypeChart"></canvas></div></div>
-        <div class="panel small"><h2>People</h2><div class="chart-box"><canvas id="peopleChart"></canvas></div></div>
+        <div class="panel small"><h2><span>People</span><span class="hint">self-picked name — not verified</span></h2><div class="chart-box"><canvas id="peopleChart"></canvas></div></div>
         <div class="panel small"><h2>Browsers</h2><div class="chart-box"><canvas id="browserChart"></canvas></div></div>
         <div class="panel small"><h2>Operating systems</h2><div class="chart-box"><canvas id="osChart"></canvas></div></div>
         <div class="panel small"><h2>Devices</h2><div class="chart-box"><canvas id="deviceChart"></canvas></div></div>
@@ -179,6 +179,21 @@
       <div class="grid two">
         <div class="panel small"><h2>Countries</h2><div class="chart-box"><canvas id="countryChart"></canvas></div></div>
         <div class="panel small"><h2>Cities</h2><div class="chart-box"><canvas id="cityChart"></canvas></div></div>
+      </div>
+
+      <div class="panel">
+        <h2><span>Visitors by IP</span><span class="hint">objective identity — one row per IP, with location, device &amp; timestamps</span></h2>
+        <div class="filter-row">
+          <input type="text" id="ipFilter" placeholder="Filter by IP, location, device, name…" />
+          <span class="muted" id="ipCount"></span>
+        </div>
+        <div class="tbl-scroll">
+          <table>
+            <thead><tr><th>IP</th><th>Location</th><th>Type</th><th>Device / OS</th><th>Name(s) used</th><th>Visits</th><th>Events</th><th>First seen</th><th>Last seen</th></tr></thead>
+            <tbody id="ipBody"></tbody>
+          </table>
+        </div>
+        <div class="empty" id="ipEmpty" hidden>No visitors recorded yet.</div>
       </div>
 
       <div class="panel">
@@ -419,6 +434,41 @@
     }
     $("recentFilter").addEventListener("input", applyRecentFilter);
 
+    let ipCache = [];
+    function renderIp(rows) { ipCache = rows || []; applyIpFilter(); }
+    function applyIpFilter() {
+      const q = ($("ipFilter").value || "").toLowerCase().trim();
+      const rows = ipCache.filter((r) => {
+        if (!q) return true;
+        return [r.ip, geoStr(r.geo), (r.geo && r.geo.isp), (r.deviceTypes || []).join(" "),
+                (r.devices || []).join(" "), (r.oses || []).join(" "), (r.browsers || []).join(" "),
+                (r.names || []).join(" ")].some((x) => String(x || "").toLowerCase().includes(q));
+      });
+      $("ipEmpty").hidden = rows.length > 0;
+      $("ipCount").textContent = q ? `${rows.length} of ${ipCache.length}` : `${ipCache.length} unique IP${ipCache.length === 1 ? "" : "s"}`;
+      $("ipBody").innerHTML = rows.map((r) => {
+        const loc = r.gps && r.gps.place ? `📍 ${esc(r.gps.place)}`
+          : geoStr(r.geo) ? esc(geoStr(r.geo)) : "<span class='muted'>—</span>";
+        const isp = r.geo && r.geo.isp ? `<div class="muted" style="font-size:.72rem">${esc(r.geo.isp)}</div>` : "";
+        const names = (r.names && r.names.length)
+          ? r.names.map((n) => `<span class="pill">${esc(n)}</span>`).join(" ")
+          : "<span class='muted'>anonymous</span>";
+        const livePill = r.live ? " <span class='pill live'>live</span>" : "";
+        return `<tr>
+          <td class="mono">${esc(r.ip)}${livePill}</td>
+          <td>${loc}${isp}</td>
+          <td>${esc((r.deviceTypes || []).join(", ") || "—")}</td>
+          <td>${esc((r.devices || []).join(", ") || "—")}<div class="muted" style="font-size:.72rem">${esc((r.oses || []).join(", "))}${r.browsers && r.browsers.length ? " · " + esc(r.browsers.join(", ")) : ""}</div></td>
+          <td>${names}</td>
+          <td class="mono">${fmtNum(r.sessions)}</td>
+          <td class="mono muted">${fmtNum(r.events)}</td>
+          <td class="muted">${esc(dateTime(r.firstSeen))}</td>
+          <td class="muted">${esc(dateTime(r.lastSeen))}<div class="muted" style="font-size:.72rem">${esc(relTime(r.lastSeen))}</div></td>
+        </tr>`;
+      }).join("");
+    }
+    $("ipFilter").addEventListener("input", applyIpFilter);
+
     function render(d) {
       lastData = d;
       renderCards(d.totals);
@@ -433,6 +483,7 @@
       makeHBar("cityChart", d.byCity);
       renderMap(d.locations);
       renderLive(d.live);
+      renderIp(d.byIp);
       renderRecent(d.recent);
       $("footNote").textContent = `Updated ${clock(d.generatedAt)} · timezone ${d.tz}`;
     }
