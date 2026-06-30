@@ -241,6 +241,12 @@ export function analyticsSummary(opts = {}) {
     inc(byPerson, s.name || "Anonymous");
     inc(byPage, s.page || "/");
     const geo = geoFor(s.ip);
+    // Backfill: the geo cache is in-memory and resets on restart, and events
+    // reloaded from disk were never geocoded. Fire a (cached, fire-and-forget)
+    // lookup for any unresolved public IP so the NEXT summary load — and the map —
+    // has city/country + lat/lon to plot. lookupGeo skips private IPs and anything
+    // already pending/cached, so this is cheap and self-deduplicating.
+    if (!geo && !isPrivateIp(s.ip)) lookupGeo(s.ip);
     if (geo && geo.country) inc(byCountry, geo.country);
     if (geo && geo.city) inc(byCity, `${geo.city}${geo.countryCode ? ", " + geo.countryCode : ""}`);
     activeMs += Math.max(0, s.lastSeen - s.startedAt);

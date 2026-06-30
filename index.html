@@ -825,7 +825,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v48";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v49";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -2679,9 +2679,13 @@
           tz: Intl.DateTimeFormat().resolvedOptions().timeZone || undefined,
           ref: document.referrer ? new URL(document.referrer).hostname : undefined,
         }, naFreshGps() ? { ...naFreshGps() } : {}, extra || {}));
-        // Prefer sendBeacon (survives unload); fall back to fetch keepalive.
-        if (navigator.sendBeacon) navigator.sendBeacon(ANALYTICS_URL, new Blob([body], { type: "application/json" }));
-        else fetch(ANALYTICS_URL, { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
+        // Keepalive fetch — NOT sendBeacon. sendBeacon always sends with
+        // credentials=include, which trips the proxy's CORS preflight (it returns no
+        // Access-Control-Allow-Credentials) so every beacon is blocked and nothing
+        // ever shows as "live". A keepalive fetch sends WITHOUT credentials, passes
+        // CORS, and still fires during page unload — same fix used for the Together
+        // relay's leave/push above.
+        fetch(ANALYTICS_URL, { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
       } catch { /* analytics must never break the app */ }
     }
     function naTrack(event) { naSend("event", { event }); }
