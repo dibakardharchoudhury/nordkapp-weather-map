@@ -825,7 +825,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v46";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v47";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -1204,6 +1204,40 @@
     //  Interactive Leaflet map
     // ============================================================
     let map = null, layer = null;
+    // Viewport culling — Leaflet keeps EVERY marker in the DOM forever, so 100+
+    // pins all reposition on every zoom/pan (the main mobile jank source). We keep
+    // only the pins inside the padded viewport attached to the map and detach the
+    // rest, so the per-frame/per-zoom work scales with what's on screen, not the
+    // whole trip. Markers, popups and click handlers are created once and reused;
+    // detaching never destroys them, so weather/POI updates stay intact.
+    let mapMarkers = [];           // [{ m, lat, lon, on, queued }] — every stop pin
+    let _addQueue = [], _addScheduled = false;
+    function cullMarkers() {
+      if (!map || !mapMarkers.length) return;
+      const b = map.getBounds().pad(0.25); // small halo so edge pins are ready before they scroll in
+      for (const o of mapMarkers) {
+        const inside = b.contains([o.lat, o.lon]);
+        if (inside) { if (!o.on && !o.queued) { o.queued = true; _addQueue.push(o); } }      // attach lazily (chunked below)
+        else if (o.on && !o.m.isPopupOpen()) { layer.removeLayer(o.m); o.on = false; }        // detach is cheap; keep an open popup attached
+      }
+      flushAdds();
+    }
+    // Attach revealed pins a few per frame so a big reveal (e.g. zooming back out to
+    // the whole-trip overview) never lands as one long task — keeps the gesture smooth.
+    function flushAdds() {
+      if (_addScheduled || !_addQueue.length) return;
+      _addScheduled = true;
+      requestAnimationFrame(() => {
+        _addScheduled = false;
+        const b = map.getBounds().pad(0.25);
+        let n = 0;
+        while (_addQueue.length && n < 24) {
+          const o = _addQueue.shift(); o.queued = false;
+          if (!o.on && b.contains([o.lat, o.lon])) { layer.addLayer(o.m); o.on = true; n++; } // skip ones panned back off-screen
+        }
+        if (_addQueue.length) flushAdds();
+      });
+    }
     function initMap() {
       if (map) return;
       map = L.map("leaflet", {
@@ -1211,6 +1245,7 @@
         zoomControl: true,
         preferCanvas: true,        // render polylines on canvas (cheaper than SVG/DOM)
         markerZoomAnimation: false, // don't transform every pin each zoom frame — the big mobile win with 100+ markers
+        fadeAnimation: false,      // skip per-tile opacity cross-fade — less GPU compositing on zoom (mobile win)
         zoomAnimationThreshold: 4,
         wheelDebounceTime: 60,
         wheelPxPerZoomLevel: 120,  // fewer, larger zoom steps per wheel tick = less churn
@@ -1219,10 +1254,12 @@
         maxZoom: 18,
         crossOrigin: true,
         updateWhenZooming: false, // don't churn tiles mid-pinch — big mobile win
+        updateWhenIdle: L.Browser.mobile, // on phones, only fetch tiles once the gesture settles
         keepBuffer: 2,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       }).addTo(map);
       layer = L.layerGroup().addTo(map);
+      map.on("moveend zoomend", cullMarkers); // re-evaluate which pins are on screen after each gesture
     }
     function pinIcon(color, emoji) {
       return L.divIcon({
@@ -1895,6 +1932,8 @@
       if (!map) return;
       map.invalidateSize();
       layer.clearLayers();
+      mapMarkers = [];
+      _addQueue = []; // drop any pending attaches from a previous render
       const bounds = [];
       TRIP.forEach((d, di) => {
         const color = DAY_COLORS[di % DAY_COLORS.length];
@@ -1902,7 +1941,9 @@
         d.stops.forEach((s) => {
           const m = L.marker([s.lat, s.lon], { icon: pinIcon(color, TYPE_ICON[s.type] || "📍") })
             .bindPopup(() => popupHtml(s, d, color)); // built lazily on open — avoids 100+ eager HTML builds per render
-          m.addTo(layer);
+          // Created once; cullMarkers() attaches only the on-screen pins. Polylines
+          // stay on the canvas (cheap), so day routes are always fully drawn.
+          mapMarkers.push({ m, lat: s.lat, lon: s.lon, on: false });
           s._marker = m;
           s._day = d;
           s._color = color;
@@ -1913,6 +1954,7 @@
         if (line.length > 1) L.polyline(line, { color, weight: 3, opacity: 0.55 }).addTo(layer);
       });
       if (bounds.length) map.fitBounds(bounds, { padding: [40, 40] });
+      cullMarkers(); // attach the pins visible in the initial fitted view
 
       // Legend — one entry per day with its dynamic date and (once loaded) temp range
       document.getElementById("legend").innerHTML = TRIP
