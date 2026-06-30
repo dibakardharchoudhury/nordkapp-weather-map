@@ -1,0 +1,9 @@
+zip exit=
+=== deploy ===
+  "site_name": "nordkapp-ai-proxy",
+  "start_time": "2026-06-30T19:25:42.6547375Z",
+  "status": 4,
+  "status_text": "",
+  "url": "https://nordkapp-ai-proxy.scm.azurewebsites.net/api/deployments/3483208b-703b-4bbe-9190-794cf5e8ebb2"
+}
+deploy exit=0
