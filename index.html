@@ -3320,19 +3320,22 @@
         } else {
           body = { room: TOGETHER_ROOM, id: "peek-" + (togetherId || "x") };
         }
-        const r = await fetch(TOGETHER_URL, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-        });
+        // Bound the request so a hung connection (dead cell zone) can't keep
+        // togetherBusy latched and stall every later heartbeat.
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 12000);
+        let r;
+        try {
+          r = await fetch(TOGETHER_URL, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal,
+          });
+        } finally { clearTimeout(t); }
         if (!togetherActive) return; // exited while the request was in flight — don't resurrect state
-        if (r.status === 429 && broadcasting) {
-          // Room already has 3 and this is a NEW name — bounce back to the picker.
-          togetherFull = true; togetherName = ""; togetherId = "";
-          try { localStorage.removeItem("togetherName"); } catch { /* ignore */ }
-          renderTogether();
-          return;
-        }
+        // Any non-OK response (including a transient 429 from the per-IP rate limiter)
+        // is a skipped tick: keep our last-known state and retry on the next heartbeat.
+        // The relay never reports "room full" — it evicts the stalest ghost server-side —
+        // so a 429 must NOT eject the user or wipe their saved name.
         if (!r.ok) return;
-        togetherFull = false;
         const data = await r.json();
         if (!togetherActive) return; // exited during the JSON read
         // Drop our own entry: while sharing-but-stale (tunnel/locked) we poll under a

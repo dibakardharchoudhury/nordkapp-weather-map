@@ -4,11 +4,19 @@
 // offline launch still shows the map, your stops, and the most recent data.
 //
 // Strategy per request type:
-//   • App shell (html, manifest, icons, Leaflet)  -> cache-first
+//   • The page itself (navigations / index.html)  -> network-first, fall back to cache
+//   • Static shell (manifest, icons, Leaflet)      -> cache-first
 //   • Map tiles (OpenStreetMap)                    -> cache-first (grows as you pan)
 //   • Data APIs (MET weather, Photon/Nominatim)    -> network-first, fall back to cache
 //   • Chat proxy POSTs                             -> never touched (always live)
-const VERSION = "v37";
+//
+// Why the page is network-first: a cache-first HTML document freezes the whole
+// front-end at whatever build was first cached, so one device can keep rendering
+// an OLD index.html (e.g. missing the latest Together-roster fields) long after a
+// new build ships — the classic stale-PWA discrepancy between two devices. Serving
+// the document network-first means an online launch always gets the current page,
+// while an offline launch still falls back to the cached shell.
+const VERSION = "v38";
 const SHELL_CACHE = `nordkapp-shell-${VERSION}`;
 const TILE_CACHE = `nordkapp-tiles-${VERSION}`;
 const DATA_CACHE = `nordkapp-data-${VERSION}`;
@@ -47,6 +55,9 @@ self.addEventListener("activate", (event) => {
 
 const isTile = (url) => /tile\.openstreetmap\.org/.test(url);
 const isData = (url) => /api\.met\.no|photon\.komoot\.io|nominatim\.openstreetmap\.org|overpass/.test(url);
+// The HTML document itself: a top-level navigation, or a direct request for the
+// root / index.html. These must stay fresh so the front-end can never go stale.
+const isDoc = (req, url) => req.mode === "navigate" || /\/$|\/index\.html(\?|$)/.test(url);
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
@@ -54,8 +65,26 @@ self.addEventListener("fetch", (event) => {
   const url = req.url;
   if (isTile(url)) { event.respondWith(cacheFirst(req, TILE_CACHE, TILE_MAX)); return; }
   if (isData(url)) { event.respondWith(networkFirst(req, DATA_CACHE)); return; }
-  event.respondWith(cacheFirst(req, SHELL_CACHE)); // shell + Leaflet
+  if (isDoc(req, url)) { event.respondWith(docNetworkFirst(req)); return; } // the page — always try the network
+  event.respondWith(cacheFirst(req, SHELL_CACHE)); // static shell + Leaflet
 });
+
+// The page: fetch fresh from the network, refresh the cached shell copy, and only
+// fall back to cache (this exact URL, then index.html, then the app root) when the
+// network is unreachable — so offline still launches the last-known page.
+async function docNetworkFirst(req) {
+  const cache = await caches.open(SHELL_CACHE);
+  try {
+    const resp = await fetch(req);
+    if (resp && resp.ok) cache.put(req, resp.clone());
+    return resp;
+  } catch (err) {
+    return (await cache.match(req)) ||
+           (await cache.match("./index.html")) ||
+           (await cache.match("./")) ||
+           Promise.reject(err);
+  }
+}
 
 async function cacheFirst(req, cacheName, cap) {
   const cache = await caches.open(cacheName);

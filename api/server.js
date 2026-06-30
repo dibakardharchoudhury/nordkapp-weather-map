@@ -144,7 +144,7 @@ const cleanMemberId = (s) => (typeof s === "string" ? s.replace(/[^A-Za-z0-9_-]/
 const cleanMemberName = (s) => (typeof s === "string" ? s.replace(/[<>]/g, "").trim().slice(0, 24) : "");
 const finiteIn = (n, lo, hi) => typeof n === "number" && isFinite(n) && n >= lo && n <= hi;
 
-app.post("/api/together", (req, res) => {
+function handleTogether(req, res) {
   const b = req.body || {};
   const room = cleanRoom(b.room);
   const id = cleanMemberId(b.id);
@@ -204,7 +204,8 @@ app.post("/api/together", (req, res) => {
     members.push({ id: mid, name: v.name, lat: v.lat, lng: v.lng, acc: v.acc ?? null, ts: v.ts });
   }
   res.json({ ok: true, members, serverTime: Date.now() });
-});
+}
+app.post("/api/together", handleTogether);
 
 // Sanitise one message's content. Accepts either a plain non-empty string, or a
 // multimodal array of {type:"text"} / {type:"image_url"} parts (Snap & Translate).
@@ -411,3 +412,20 @@ app.post("/api/chat/stream", chatLimiter, async (req, res) => {
 
 const port = process.env.PORT || 8080;
 app.listen(port, () => console.log(`Nordkapp AI proxy listening on ${port}`));
+
+// Additive named exports — used only by the Together-mode unit tests
+// (api/together.test.mjs). They expose the in-memory relay internals so the
+// handler can be exercised with mock req/res and time-controlled state. The
+// running server's behaviour is unchanged.
+export {
+  handleTogether,
+  togetherRooms,
+  pruneTogether,
+  cleanRoom,
+  cleanMemberId,
+  cleanMemberName,
+  finiteIn,
+  TOGETHER_TTL_MS,
+  TOGETHER_MAX_MEMBERS,
+  TOGETHER_MAX_ROOMS,
+};
