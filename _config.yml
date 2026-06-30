@@ -1,0 +1,9 @@
+# GitHub Pages (Jekyll) build config.
+# The static PWA lives at the repo root and is published as-is. The backend in
+# api/ runs on Azure App Service — it must NOT be served as downloadable files
+# from the public website. Keep server source and infra/deploy scripts out of
+# the published site (defence-in-depth against casual file enumeration).
+exclude:
+  - api
+  - "*.ps1"
+  - "*.out"

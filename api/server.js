@@ -9,6 +9,7 @@
 
 import express from "express";
 import rateLimit from "express-rate-limit";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { DefaultAzureCredential } from "@azure/identity";
 import { getTripContext } from "./context.js";
 import { recordAnalytics, analyticsSummary, ensureAnalyticsLoaded } from "./analytics.js";
@@ -83,11 +84,13 @@ const app = express();
 // client IP in X-Forwarded-For; trust exactly one hop so per-IP limits key off
 // the true caller (and can't be spoofed by adding extra XFF entries).
 app.set("trust proxy", 1);
+app.disable("x-powered-by"); // don't advertise the framework/version to attackers
 // Larger limit than a pure-text chat needs, so a downscaled photo (Snap &
 // Translate) fits. Per-image size is capped again in sanitizeContent below.
 app.use(express.json({ limit: "6mb" }));
 app.use((req, res, next) => {
   applyCors(req, res);
+  res.setHeader("X-Content-Type-Options", "nosniff"); // stop MIME-sniffing of JSON replies
   if (req.method === "OPTIONS") return res.status(204).end();
   next();
 });
@@ -108,6 +111,11 @@ function clientKey(req) {
 const rlOpts = { standardHeaders: true, legacyHeaders: false, keyGenerator: clientKey, message: { error: "Too many requests — slow down and retry shortly." } };
 const globalLimiter = rateLimit({ windowMs: 60_000, max: 60, ...rlOpts });
 const chatLimiter = rateLimit({ windowMs: 60_000, max: 15, ...rlOpts });
+// Dedicated, tight throttle for the key-gated dashboard read. Only FAILED
+// attempts count (skipSuccessfulRequests), so a legitimate operator with the
+// right key is never blocked, while key-guessing is capped at 10/min/IP — far
+// below the global 60/min — and trips a 429 long before any sweep can progress.
+const authLimiter = rateLimit({ windowMs: 60_000, max: 10, skipSuccessfulRequests: true, ...rlOpts });
 app.use(globalLimiter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -222,10 +230,17 @@ app.post("/api/analytics", async (req, res) => {
 });
 
 const ANALYTICS_KEY = process.env.ANALYTICS_KEY || "";
-app.get("/api/analytics/summary", async (req, res) => {
+// Constant-time, length-independent compare (hash both sides to a fixed 32 bytes)
+// so a wrong key can't be inferred from response timing.
+function keyEquals(a, b) {
+  const ha = createHash("sha256").update(String(a)).digest();
+  const hb = createHash("sha256").update(String(b)).digest();
+  return timingSafeEqual(ha, hb);
+}
+app.get("/api/analytics/summary", authLimiter, async (req, res) => {
   if (ANALYTICS_KEY) {
     const k = req.get("x-analytics-key") || req.query.key || "";
-    if (k !== ANALYTICS_KEY) return res.status(401).json({ error: "analytics key required" });
+    if (!keyEquals(k, ANALYTICS_KEY)) return res.status(401).json({ error: "analytics key required" });
   }
   await ensureAnalyticsLoaded(); // hydrate persisted history on a cold start
   const tz = typeof req.query.tz === "string" ? req.query.tz : "UTC";
