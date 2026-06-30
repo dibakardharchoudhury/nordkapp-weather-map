@@ -14,6 +14,7 @@ import os from "node:os";
 const FILE = process.env.NA_ANALYTICS_FILE ||
   path.join(process.env.HOME || os.tmpdir(), "data", "analytics.jsonl");
 const PERSIST = process.env.NA_ANALYTICS_NOFILE !== "1";
+console.log(`[analytics] persist=${PERSIST} file=${FILE} HOME=${process.env.HOME || "(unset)"}`);
 const MAX_MEM = 20000;          // cap the in-memory ring (and the startup re-load)
 const LIVE_MS = 5 * 60_000;     // a session counts as "live" if seen in the last 5 min
 const TYPES = new Set(["pageview", "heartbeat", "event"]);
@@ -90,6 +91,11 @@ async function ensureLoaded() {
   } catch { /* no file yet */ }
 }
 
+// Hydrate the in-memory ring from the persisted JSONL (idempotent). The summary
+// endpoint awaits this so the dashboard shows full history right after a cold start,
+// not just events seen since the process booted.
+export const ensureAnalyticsLoaded = ensureLoaded;
+
 function pushMem(ev) {
   events.push(ev);
   if (events.length > MAX_MEM) events.splice(0, events.length - MAX_MEM);
@@ -101,7 +107,7 @@ async function appendFile(ev) {
     try {
       await fs.mkdir(path.dirname(FILE), { recursive: true });
       await fs.appendFile(FILE, JSON.stringify(ev) + "\n");
-    } catch { /* analytics must never break the app */ }
+    } catch (e) { console.error(`[analytics] write failed for ${FILE}:`, e?.message || e); }
   });
   return writeChain;
 }

@@ -11,7 +11,7 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import { DefaultAzureCredential } from "@azure/identity";
 import { getTripContext } from "./context.js";
-import { recordAnalytics, analyticsSummary } from "./analytics.js";
+import { recordAnalytics, analyticsSummary, ensureAnalyticsLoaded } from "./analytics.js";
 
 const credential = new DefaultAzureCredential();
 const SCOPE = "https://cognitiveservices.azure.com/.default";
@@ -219,11 +219,12 @@ app.post("/api/analytics", async (req, res) => {
 });
 
 const ANALYTICS_KEY = process.env.ANALYTICS_KEY || "";
-app.get("/api/analytics/summary", (req, res) => {
+app.get("/api/analytics/summary", async (req, res) => {
   if (ANALYTICS_KEY) {
     const k = req.get("x-analytics-key") || req.query.key || "";
     if (k !== ANALYTICS_KEY) return res.status(401).json({ error: "analytics key required" });
   }
+  await ensureAnalyticsLoaded(); // hydrate persisted history on a cold start
   const tz = typeof req.query.tz === "string" ? req.query.tz : "UTC";
   const day = typeof req.query.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.day) ? req.query.day : null;
   res.json(analyticsSummary({ tz, day }));
