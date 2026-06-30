@@ -58,15 +58,24 @@ const isData = (url) => /api\.met\.no|photon\.komoot\.io|nominatim\.openstreetma
 // The HTML document itself: a top-level navigation, or a direct request for the
 // root / index.html. These must stay fresh so the front-end can never go stale.
 const isDoc = (req, url) => req.mode === "navigate" || /\/$|\/index\.html(\?|$)/.test(url);
+// version.json is the "latest build" beacon — must always come from the network,
+// never a cached copy, or the in-app update check would be poisoned.
+const isVersion = (url) => /\/version\.json(\?|$)/.test(url);
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;          // chat POSTs and other writes stay live
   const url = req.url;
+  if (isVersion(url)) { event.respondWith(fetch(req)); return; } // never cache the version beacon
   if (isTile(url)) { event.respondWith(cacheFirst(req, TILE_CACHE, TILE_MAX)); return; }
   if (isData(url)) { event.respondWith(networkFirst(req, DATA_CACHE)); return; }
   if (isDoc(req, url)) { event.respondWith(docNetworkFirst(req)); return; } // the page — always try the network
   event.respondWith(cacheFirst(req, SHELL_CACHE)); // static shell + Leaflet
+});
+
+// Let the page apply a freshly-installed worker without waiting for all tabs to close.
+self.addEventListener("message", (event) => {
+  if (event.data === "skipWaiting") self.skipWaiting();
 });
 
 // The page: fetch fresh from the network, refresh the cached shell copy, and only

@@ -456,6 +456,31 @@
     .chat-fab .fab-spark { font-size: 1.1rem; line-height: 1; }
     .chat-fab.hidden { opacity: 0; pointer-events: none; transform: scale(.9); }
 
+    /* Build-version badge — bottom-left, opposite the Copilot FAB. Tells you which
+       front-end build you're on and whether a newer one has shipped (the cure for
+       a phone and a laptop quietly running different cached versions). */
+    .ver-badge {
+      position: fixed; left: 12px; bottom: 12px; z-index: 1100;
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 9px; border-radius: 999px;
+      background: var(--cp-surface-soft); color: var(--cp-muted, #888);
+      border: 1px solid var(--cp-border);
+      font-family: inherit; font-size: 0.68rem; font-weight: 600; line-height: 1;
+      letter-spacing: .02em; user-select: none;
+      box-shadow: 0 1px 4px rgba(0,0,0,.12); opacity: .72;
+      transition: opacity .15s ease, background .15s ease, color .15s ease;
+    }
+    .ver-badge:hover { opacity: 1; }
+    .ver-badge .ver-dot { width: 7px; height: 7px; border-radius: 50%; background: #9aa0a6; flex: 0 0 auto; }
+    .ver-badge.latest .ver-dot { background: #2e9e5b; }
+    .ver-badge.checking .ver-dot { background: #d9a527; }
+    .ver-badge.stale {
+      cursor: pointer; opacity: 1; background: var(--cp-accent); color: var(--cp-accent-fg);
+      border-color: var(--cp-accent); animation: verPulse 1.8s ease-in-out infinite;
+    }
+    .ver-badge.stale .ver-dot { background: #fff; }
+    @keyframes verPulse { 0%,100% { box-shadow: 0 1px 4px rgba(0,0,0,.12); } 50% { box-shadow: 0 0 0 4px var(--cp-accent-soft); } }
+
     .chat-panel {
       position: fixed; right: 22px; bottom: 22px; z-index: 1300;
       width: min(400px, calc(100vw - 32px));
@@ -791,11 +816,15 @@
     <div class="brief-body" id="briefBody"></div>
   </div>
 
+  <!-- Build-version indicator (bottom-left). Click when an update is ready to reload. -->
+  <div class="ver-badge checking" id="verBadge" role="status" aria-live="polite" title="App build version"><span class="ver-dot"></span><span id="verText">…</span></div>
+
   <script>
     // ============================================================
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
+    const APP_VERSION = "v38";                  // front-end build — keep in lock-step with sw.js VERSION
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
 
     // ---- Live data source: the Nordkapp "Google My Maps" map ----
@@ -2483,6 +2512,70 @@
       chatHistory.push({ role: "assistant", content: data.reply });
     }
 
+    // ============================================================
+    //  Build-version badge — shows which front-end build is running
+    //  and whether a newer one has been deployed. version.json is the
+    //  source of truth (the latest pushed build); it's fetched with
+    //  no-store so a service-worker cache can never mask a new release.
+    // ============================================================
+    function initVersion() {
+      const badge = document.getElementById("verBadge");
+      const text = document.getElementById("verText");
+      if (!badge || !text) return;
+      text.textContent = APP_VERSION;
+
+      const setState = (cls, label, title) => {
+        badge.className = "ver-badge " + cls;
+        if (label != null) text.textContent = label;
+        if (title) badge.title = title;
+      };
+
+      let updateReady = false;
+      async function check() {
+        if (updateReady) return; // already flagged — leave the "update ready" state
+        setState("checking", APP_VERSION, "Checking for updates…");
+        try {
+          // Nudge the service worker to look for a new build too.
+          if ("serviceWorker" in navigator) {
+            const reg = await navigator.serviceWorker.getRegistration();
+            if (reg) reg.update().catch(() => {});
+          }
+          const r = await fetch("./version.json?ts=" + Date.now(), { cache: "no-store" });
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          const latest = (await r.json()).version;
+          if (latest && latest !== APP_VERSION) {
+            updateReady = true;
+            setState("stale", `${APP_VERSION} → ${latest} · update — tap to reload`,
+              `A newer build (${latest}) is available. Tap to reload.`);
+          } else {
+            setState("latest", APP_VERSION, `You're on the latest build (${APP_VERSION}).`);
+          }
+        } catch {
+          // Offline or check failed — just show the build, no false "stale" alarm.
+          setState("", APP_VERSION, `Build ${APP_VERSION} (couldn't check for updates — offline?).`);
+        }
+      }
+
+      badge.addEventListener("click", () => {
+        if (!updateReady) { check(); return; }
+        // Reload from the network for the fresh page (SW serves the doc network-first).
+        try {
+          if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.getRegistration().then((reg) => {
+              if (reg && reg.waiting) reg.waiting.postMessage("skipWaiting");
+            }).catch(() => {});
+          }
+        } catch { /* ignore */ }
+        location.reload();
+      });
+
+      check();
+      // Re-check when the user returns to the tab and once an hour while open.
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") check(); });
+      window.addEventListener("online", check);
+      setInterval(check, 3600000);
+    }
+
     function initChat() {
       const fab = document.getElementById("chatFab");
       const panel = document.getElementById("chatPanel");
@@ -3605,6 +3698,7 @@
     initChat();
     initExtras();
     initBriefing();
+    initVersion();
     boot();
   </script>
 </body>
