@@ -71,7 +71,10 @@ function applyCors(req, res) {
     res.set("Vary", "Origin");
     res.set("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
     res.set("Access-Control-Allow-Headers", "Content-Type, x-analytics-key");
-    res.set("Access-Control-Max-Age", "86400");
+    // Short preflight cache: if the CORS policy ever changes again, browsers
+    // re-check within minutes instead of being pinned to a stale (broken) preflight
+    // for a whole day.
+    res.set("Access-Control-Max-Age", "600");
   }
 }
 

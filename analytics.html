@@ -242,7 +242,7 @@
   <script>
     const SUMMARY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/analytics/summary";
     const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    const NA_BUILD = "v41"; // keep in lock-step with version.json / index.html APP_VERSION    const ACCENT = () => getComputedStyle(document.documentElement).getPropertyValue("--cp-accent").trim() || "#b11f4b";
+    const NA_BUILD = "v42"; // keep in lock-step with version.json / index.html APP_VERSION    const ACCENT = () => getComputedStyle(document.documentElement).getPropertyValue("--cp-accent").trim() || "#b11f4b";
 
     // A pleasant categorical palette (works in both themes).
     const PALETTE = ["#b11f4b","#2f6fe0","#16a34a","#f59e0b","#8b5cf6","#0ea5e9","#ef4444","#14b8a6","#ec4899","#84cc16","#f97316","#6366f1"];
@@ -509,9 +509,11 @@
         const url = new URL(SUMMARY_URL);
         url.searchParams.set("tz", TZ);
         if (drillDay) url.searchParams.set("day", drillDay);
-        const headers = {};
-        if (analyticsKey) headers["x-analytics-key"] = analyticsKey;
-        const r = await fetch(url.toString(), { headers, cache: "no-store" });
+        // Send the key as a query param, NOT a custom header — a custom header makes
+        // the browser do a CORS preflight (OPTIONS), and a cached/poisoned preflight
+        // can silently block the request for hours. A plain GET needs no preflight.
+        if (analyticsKey) url.searchParams.set("key", analyticsKey);
+        const r = await fetch(url.toString(), { cache: "no-store" });
         if (r.status === 401 || r.status === 403) { showGate(false, analyticsKey ? "That key was rejected. Try a different one." : ""); return; }
         if (!r.ok) throw new Error("HTTP " + r.status);
         const d = await r.json();
