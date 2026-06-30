@@ -70,7 +70,7 @@ function applyCors(req, res) {
     res.set("Access-Control-Allow-Origin", allow);
     res.set("Vary", "Origin");
     res.set("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.set("Access-Control-Allow-Headers", "Content-Type, x-analytics-key");
     res.set("Access-Control-Max-Age", "86400");
   }
 }

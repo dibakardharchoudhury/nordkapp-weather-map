@@ -16,7 +16,7 @@
 // new build ships — the classic stale-PWA discrepancy between two devices. Serving
 // the document network-first means an online launch always gets the current page,
 // while an offline launch still falls back to the cached shell.
-const VERSION = "v40";
+const VERSION = "v41";
 const SHELL_CACHE = `nordkapp-shell-${VERSION}`;
 const TILE_CACHE = `nordkapp-tiles-${VERSION}`;
 const DATA_CACHE = `nordkapp-data-${VERSION}`;
@@ -85,7 +85,9 @@ self.addEventListener("message", (event) => {
 async function docNetworkFirst(req) {
   const cache = await caches.open(SHELL_CACHE);
   try {
-    const resp = await fetch(req);
+    // Bypass the browser/CDN HTTP cache for the document itself, so an online
+    // launch can never be pinned to a stale build by an edge-cached copy.
+    const resp = await fetch(req, { cache: "no-store" });
     if (resp && resp.ok) cache.put(req, resp.clone());
     return resp;
   } catch (err) {

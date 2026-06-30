@@ -137,6 +137,7 @@
       <div class="toolbar">
         <label class="switch"><input type="checkbox" id="autoToggle" checked /> Auto-refresh</label>
         <button class="btn icon" id="themeBtn" title="Toggle light / dark">🌗</button>
+        <button class="btn" id="keyChangeBtn" title="Change the analytics access key">🔑 Key</button>
         <button class="btn" id="refreshBtn" title="Refresh now">↻ Refresh</button>
         <a class="btn primary" href="./index.html">← Back to trip</a>
       </div>
@@ -144,15 +145,27 @@
 
     <p class="status" id="status"><span class="dot" id="statusDot"></span><span id="statusText">Loading…</span></p>
 
+    <div id="updateBar" hidden style="display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap;background:var(--cp-accent-soft);border:1px solid var(--cp-accent);color:var(--cp-text);padding:10px 14px;border-radius:12px;margin:0 0 14px;font-size:.9rem;">
+      <span>🔄 A newer version of the dashboard is available.</span>
+      <button class="btn primary" id="updateBtn" type="button">Reload</button>
+    </div>
+
     <div id="gate" class="gate" hidden>
       <h2>🔒 Analytics access</h2>
       <p class="muted">This dashboard shows visitor IPs and locations, so it's protected by an access key.</p>
       <input type="password" id="keyInput" placeholder="Enter analytics key" autocomplete="off" />
-      <button class="btn primary" id="keyBtn">Unlock</button>
+      <div class="filter-row">
+        <button class="btn primary" id="keyBtn">Unlock</button>
+        <button class="btn" id="gateCancelBtn" type="button" hidden>Cancel</button>
+        <span class="muted" id="gateMsg"></span>
+      </div>
     </div>
 
     <div id="dash" hidden>
-      <div id="errBanner" class="err-banner" hidden></div>
+      <div id="errBanner" class="err-banner" hidden>
+        <span id="errMsg"></span>
+        <button class="btn" id="errKeyBtn" type="button" style="margin-left:10px">🔑 Enter key</button>
+      </div>
 
       <div class="cards" id="cards"></div>
 
@@ -229,7 +242,7 @@
   <script>
     const SUMMARY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/analytics/summary";
     const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    const ACCENT = () => getComputedStyle(document.documentElement).getPropertyValue("--cp-accent").trim() || "#b11f4b";
+    const NA_BUILD = "v41"; // keep in lock-step with version.json / index.html APP_VERSION    const ACCENT = () => getComputedStyle(document.documentElement).getPropertyValue("--cp-accent").trim() || "#b11f4b";
 
     // A pleasant categorical palette (works in both themes).
     const PALETTE = ["#b11f4b","#2f6fe0","#16a34a","#f59e0b","#8b5cf6","#0ea5e9","#ef4444","#14b8a6","#ec4899","#84cc16","#f97316","#6366f1"];
@@ -499,7 +512,7 @@
         const headers = {};
         if (analyticsKey) headers["x-analytics-key"] = analyticsKey;
         const r = await fetch(url.toString(), { headers, cache: "no-store" });
-        if (r.status === 401) { showGate(); return; }
+        if (r.status === 401 || r.status === 403) { showGate(false, analyticsKey ? "That key was rejected. Try a different one." : ""); return; }
         if (!r.ok) throw new Error("HTTP " + r.status);
         const d = await r.json();
         $("gate").hidden = true; $("dash").hidden = false; $("errBanner").hidden = true;
@@ -510,20 +523,31 @@
         setStatus("err", "Couldn't load analytics");
         $("dash").hidden = false;
         $("errBanner").hidden = false;
-        $("errBanner").textContent = "Failed to reach the analytics service. " + (navigator.onLine ? "Please try again." : "You appear to be offline.");
+        $("errMsg").textContent = "Failed to reach the analytics service. "
+          + (navigator.onLine ? "It may be waking up — retry in a moment, or re-enter your key." : "You appear to be offline.");
       }
     }
 
-    function showGate() {
-      $("dash").hidden = true; $("gate").hidden = false;
-      setStatus("err", "Access key required");
+    // manual = the user opened the gate on purpose (offer Cancel back to the dashboard).
+    function showGate(manual, msg) {
+      $("dash").hidden = !!manual && !lastData ? true : (manual ? false : true);
+      if (!manual) $("dash").hidden = true;
+      $("gate").hidden = false;
+      try { $("keyInput").value = analyticsKey || ""; } catch {}
+      $("gateMsg").textContent = msg || "";
+      $("gateCancelBtn").hidden = !(manual && lastData);
+      setStatus(manual ? "warn" : "err", manual ? "Change access key" : "Access key required");
+      setTimeout(() => { try { $("keyInput").focus(); } catch {} }, 40);
     }
     $("keyBtn").addEventListener("click", () => {
       analyticsKey = $("keyInput").value.trim();
-      try { localStorage.setItem("naAnalyticsKey", analyticsKey); } catch {}
+      try { if (analyticsKey) localStorage.setItem("naAnalyticsKey", analyticsKey); else localStorage.removeItem("naAnalyticsKey"); } catch {}
       $("gate").hidden = true; refresh();
     });
     $("keyInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("keyBtn").click(); });
+    $("gateCancelBtn").addEventListener("click", () => { $("gate").hidden = true; if (lastData) { $("dash").hidden = false; render(lastData); } });
+    $("keyChangeBtn").addEventListener("click", () => showGate(true));
+    $("errKeyBtn").addEventListener("click", () => showGate(true));
 
     // --- auto-refresh ---
     let timer = null;
@@ -532,6 +556,27 @@
     $("autoToggle").addEventListener("change", (e) => { if (e.target.checked) { startTimer(); refresh(); } else stopTimer(); });
     $("refreshBtn").addEventListener("click", refresh);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && $("autoToggle").checked) refresh(); });
+
+    // --- update awareness: prompt to reload when a newer build ships ---
+    async function checkBuild() {
+      try {
+        const r = await fetch("./version.json?ts=" + Date.now(), { cache: "no-store" });
+        if (!r.ok) return;
+        const latest = (await r.json()).version;
+        if (latest && latest !== NA_BUILD) $("updateBar").hidden = false;
+      } catch { /* offline — no false alarm */ }
+    }
+    $("updateBtn").addEventListener("click", () => {
+      try {
+        if ("serviceWorker" in navigator) {
+          navigator.serviceWorker.getRegistration().then((reg) => { if (reg && reg.waiting) reg.waiting.postMessage("skipWaiting"); }).catch(() => {});
+        }
+      } catch { /* ignore */ }
+      location.reload();
+    });
+    checkBuild();
+    setInterval(checkBuild, 300000);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkBuild(); });
 
     refresh();
     startTimer();
