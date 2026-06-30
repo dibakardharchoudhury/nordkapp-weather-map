@@ -126,7 +126,7 @@ app.get("/api/context", async (_req, res) => {
 // GPS and we echo back the other members seen within a short TTL. Privacy by
 // design — entries self-expire, and rooms/members are capped to bound abuse. The
 // existing per-IP rate limiter (globalLimiter) protects this endpoint too.
-const TOGETHER_TTL_MS = 300_000;    // prune a member 5 min after their last CONTACT (seen). A joined car with no fresh fix (long tunnel, screen on) keepalive-pings every few sec so it never prunes and stays on the family's map (dimmed) however long the tunnel; a locked/crashed app stops pinging and drops after this grace window. Explicit leave drops instantly.
+const TOGETHER_TTL_MS = 3_600_000;  // BACKSTOP only — prune a member 60 min after their last CONTACT (seen). Removal is intent-driven: an explicit Stop / exit / clean app close drops a car instantly (leave). This long window exists solely to mop up UN-clean exits (crash, force-kill, battery death) where no leave signal was sent. A car with coverage but no fix (long tunnel, screen on) keepalive-pings so it never prunes; a car in a real no-signal dead zone (e.g. Tromsø↔Hammerfest) can't ping, so the family keeps its last-known spot dimmed as "signal lost · last seen Xm ago" for up to this window, then it clears.
 const TOGETHER_MAX_MEMBERS = 8;     // per room — one slot per car (3 cars); headroom covers mixed app versions during rollout
 const TOGETHER_MAX_ROOMS = 500;
 const togetherRooms = new Map();    // room -> Map(id -> { name, lat, lng, acc, ts, seen }) — ts = last fix time (drives client staleness); seen = last contact (drives TTL prune)
@@ -152,7 +152,8 @@ app.post("/api/together", (req, res) => {
 
   // Explicit leave — when a member exits Together mode (or closes the app) we remove
   // them at once so the rest of the family sees them drop offline immediately,
-  // instead of lingering until the 5-minute TTL prunes them.
+  // instead of lingering until the 60-minute backstop TTL prunes them. This is the
+  // primary removal path; the TTL is only a safety net for un-clean exits.
   if (b.leave === true) {
     const mm = togetherRooms.get(room);
     if (mm) { mm.delete(id); if (mm.size === 0) togetherRooms.delete(room); }
@@ -177,7 +178,20 @@ app.post("/api/together", (req, res) => {
       m = new Map();
       togetherRooms.set(room, m);
     }
-    if (!m.has(id) && m.size >= TOGETHER_MAX_MEMBERS) return res.status(429).json({ error: "room full" });
+    if (!m.has(id) && m.size >= TOGETHER_MAX_MEMBERS) {
+      // Never reject a (re)join with "room full". The cap bounds memory, but a real
+      // traveller must ALWAYS be able to join/rejoin and resume tracking — so instead of
+      // a 429 we evict the STALEST member (oldest last-contact). Live cars refresh `seen`
+      // every few sec (broadcast or keepalive), so the evictee is always an abandoned
+      // ghost, never an active car. Same-id rejoins never reach here — they upsert below
+      // via m.has(id), so a returning car simply overwrites its own slot with the latest fix.
+      let evictId = null, oldest = Infinity;
+      for (const [eid, ev] of m) {
+        const s = ev.seen ?? ev.ts ?? 0;
+        if (s < oldest) { oldest = s; evictId = eid; }
+      }
+      if (evictId) m.delete(evictId);
+    }
     const acc = finiteIn(b.acc, 0, 100000) ? b.acc : null; // GPS accuracy radius (m), if reported
     m.set(id, { name: cleanMemberName(b.name) || "Traveller", lat: b.lat, lng: b.lng, acc, ts: now, seen: now });
   }
