@@ -242,7 +242,7 @@
   <script>
     const SUMMARY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/analytics/summary";
     const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    const NA_BUILD = "v43"; // keep in lock-step with version.json / index.html APP_VERSION
+    const NA_BUILD = "v44"; // keep in lock-step with version.json / index.html APP_VERSION
     const ACCENT = () => getComputedStyle(document.documentElement).getPropertyValue("--cp-accent").trim() || "#b11f4b";
 
     // A pleasant categorical palette (works in both themes).
@@ -255,6 +255,8 @@
     }
     let analyticsKey = readKeyFromHash() || (() => { try { return localStorage.getItem("naAnalyticsKey") || ""; } catch { return ""; } })();
     if (readKeyFromHash()) { try { localStorage.setItem("naAnalyticsKey", analyticsKey); } catch {} history.replaceState(null, "", location.pathname); }
+    // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
+    if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
 
     const $ = (id) => document.getElementById(id);
     const fmtNum = (n) => (n == null ? "—" : n.toLocaleString());
@@ -569,14 +571,29 @@
         if (latest && latest !== NA_BUILD) $("updateBar").hidden = false;
       } catch { /* offline — no false alarm */ }
     }
-    $("updateBtn").addEventListener("click", () => {
+    // A real "get me the latest" button: an old service worker can keep serving a
+    // frozen page (and a stale CORS/key path), so just nudging a waiting worker isn't
+    // enough. Tear the SW + all caches down, then reload past every cache layer.
+    async function hardReload(btn) {
+      if (btn) { btn.disabled = true; btn.textContent = "Updating…"; }
       try {
         if ("serviceWorker" in navigator) {
-          navigator.serviceWorker.getRegistration().then((reg) => { if (reg && reg.waiting) reg.waiting.postMessage("skipWaiting"); }).catch(() => {});
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map((r) => r.unregister().catch(() => {})));
         }
       } catch { /* ignore */ }
-      location.reload();
-    });
+      try {
+        if (window.caches) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((k) => caches.delete(k).catch(() => {})));
+        }
+      } catch { /* ignore */ }
+      // Cache-bust the navigation so the HTTP disk cache can't serve a stale copy either.
+      const u = new URL(location.href);
+      u.searchParams.set("fresh", Date.now());
+      location.replace(u.href);
+    }
+    $("updateBtn").addEventListener("click", () => hardReload($("updateBtn")));
     checkBuild();
     setInterval(checkBuild, 300000);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkBuild(); });

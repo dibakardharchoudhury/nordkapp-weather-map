@@ -16,7 +16,7 @@
 // new build ships — the classic stale-PWA discrepancy between two devices. Serving
 // the document network-first means an online launch always gets the current page,
 // while an offline launch still falls back to the cached shell.
-const VERSION = "v43";
+const VERSION = "v44";
 const SHELL_CACHE = `nordkapp-shell-${VERSION}`;
 const TILE_CACHE = `nordkapp-tiles-${VERSION}`;
 const DATA_CACHE = `nordkapp-data-${VERSION}`;
@@ -57,8 +57,10 @@ self.addEventListener("activate", (event) => {
 const isTile = (url) => /tile\.openstreetmap\.org/.test(url);
 const isData = (url) => /api\.met\.no|photon\.komoot\.io|nominatim\.openstreetmap\.org|overpass/.test(url);
 // The HTML document itself: a top-level navigation, or a direct request for the
-// root / index.html. These must stay fresh so the front-end can never go stale.
-const isDoc = (req, url) => req.mode === "navigate" || /\/$|\/index\.html(\?|$)/.test(url);
+// root / index.html / analytics.html. These must stay fresh so the front-end can
+// never go stale (older builds served analytics.html cache-first, which froze the
+// dashboard on a stale build until the service worker was torn down).
+const isDoc = (req, url) => req.mode === "navigate" || /\/$|\/index\.html(\?|$)|\/analytics\.html(\?|$)/.test(url);
 // version.json is the "latest build" beacon — must always come from the network,
 // never a cached copy, or the in-app update check would be poisoned.
 const isVersion = (url) => /\/version\.json(\?|$)/.test(url);

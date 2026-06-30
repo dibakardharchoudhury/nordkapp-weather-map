@@ -825,7 +825,9 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v43";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v44";                  // front-end build — keep in lock-step with sw.js VERSION
+    // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
+    if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
 
     // ---- Live data source: the Nordkapp "Google My Maps" map ----
@@ -2559,17 +2561,27 @@
         }
       }
 
-      badge.addEventListener("click", () => {
+      badge.addEventListener("click", async () => {
         if (!updateReady) { check(); return; }
-        // Reload from the network for the fresh page (SW serves the doc network-first).
+        // A stale service worker can keep serving a frozen page, so just nudging a
+        // waiting worker isn't enough. Tear the SW + all caches down, then reload
+        // past every cache layer with a one-shot cache-bust param.
+        setState("checking", "Updating…", "Fetching the latest build…");
         try {
           if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.getRegistration().then((reg) => {
-              if (reg && reg.waiting) reg.waiting.postMessage("skipWaiting");
-            }).catch(() => {});
+            const regs = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(regs.map((r) => r.unregister().catch(() => {})));
           }
         } catch { /* ignore */ }
-        location.reload();
+        try {
+          if (window.caches) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map((k) => caches.delete(k).catch(() => {})));
+          }
+        } catch { /* ignore */ }
+        const u = new URL(location.href);
+        u.searchParams.set("fresh", Date.now());
+        location.replace(u.href);
       });
 
       check();
