@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Traffic Analytics · Nordkapp Roadtrip</title>
+  <meta name="description" content="Live and historical traffic analytics for the Nordkapp Roadtrip app — who, when, from which device and where." />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <meta name="theme-color" content="#b11f4b" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#3d3b3a" media="(prefers-color-scheme: dark)" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script>
+    // Theme detection — match the main app (Clawpilot palette).
+    (() => {
+      const stored = (() => { try { return localStorage.getItem("naTheme"); } catch { return null; } })();
+      const theme = stored || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+    }
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef; --cp-bg-elevated: #fcfbf8; --cp-surface: #ffffff; --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede; --cp-border-strong: #919191;
+      --cp-text: #242424; --cp-text-muted: #5c5c5c; --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b; --cp-accent-hover: #9a1a41; --cp-accent-soft: rgba(177,31,75,.08); --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a; --cp-danger: #dc2626; --cp-warning: #f59e0b; --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0,0,0,.12);
+      --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a; --cp-bg-elevated: #343231; --cp-surface: #292929; --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747; --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede; --cp-text-muted: #919191; --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1; --cp-accent-hover: #fb7b91; --cp-accent-soft: rgba(253,142,161,.14); --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80; --cp-danger: #f87171; --cp-warning: #fbbf24; --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0,0,0,.32);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--cp-bg); color: var(--cp-text); line-height: 1.5; -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 22px 18px 64px; }
+
+    header.hero {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+      gap: 14px; margin-bottom: 18px;
+    }
+    .hero .eyebrow { font-size: 0.72rem; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; color: var(--cp-accent); }
+    .hero h1 { font-family: var(--font-display); font-size: 1.85rem; line-height: 1.08; margin: 2px 0 4px; font-weight: 600; }
+    .hero .sub { color: var(--cp-text-muted); font-size: 0.9rem; }
+    .toolbar { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+    button.btn, a.btn {
+      font-family: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer; text-decoration: none;
+      border: 1px solid var(--cp-border); background: var(--cp-surface); color: var(--cp-text);
+      padding: 8px 15px; border-radius: 999px; transition: all .15s ease; display: inline-flex; align-items: center; gap: 6px;
+    }
+    button.btn:hover, a.btn:hover { border-color: var(--cp-border-strong); }
+    button.btn.primary { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
+    button.btn.primary:hover { background: var(--cp-accent-hover); }
+    .switch { display: inline-flex; align-items: center; gap: 7px; font-size: 0.82rem; color: var(--cp-text-muted); }
+    .switch input { accent-color: var(--cp-accent); width: 15px; height: 15px; }
+
+    .status { font-size: 0.84rem; color: var(--cp-text-muted); margin: 0 0 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--cp-text-soft); display: inline-block; }
+    .dot.ok { background: var(--cp-success); }
+    .dot.live { background: var(--cp-success); box-shadow: 0 0 0 0 rgba(22,163,74,.55); animation: pulse 1.8s infinite; }
+    .dot.warn { background: var(--cp-warning); }
+    .dot.err { background: var(--cp-danger); }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(22,163,74,.5); } 70% { box-shadow: 0 0 0 8px rgba(22,163,74,0); } 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); } }
+
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .stat {
+      background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 14px; padding: 14px 16px;
+      box-shadow: 0 0 2px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.12);
+    }
+    .stat .k { font-size: 0.74rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--cp-text-soft); }
+    .stat .v { font-size: 1.7rem; font-weight: 700; font-family: var(--font-display); margin-top: 3px; }
+    .stat .v small { font-size: 0.85rem; font-weight: 600; color: var(--cp-text-muted); font-family: inherit; }
+    .stat.live .v { color: var(--cp-success); }
+
+    .grid { display: grid; gap: 16px; }
+    .grid.two { grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); }
+    .grid.three { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+
+    .panel { background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 16px; padding: 16px 18px; box-shadow: 0 0 2px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.12); margin-bottom: 16px; }
+    .panel h2 { font-size: 1.02rem; margin: 0 0 2px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .panel h2 .hint { font-size: 0.74rem; font-weight: 500; color: var(--cp-text-soft); }
+    .panel .chart-box { position: relative; height: 280px; margin-top: 10px; }
+    .panel.small .chart-box { height: 230px; }
+    .panel .crumbs { font-size: 0.8rem; color: var(--cp-text-muted); margin-top: 8px; min-height: 18px; }
+    .panel .crumbs a { color: var(--cp-link); cursor: pointer; text-decoration: none; }
+    .panel .crumbs a:hover { text-decoration: underline; }
+
+    #map { height: 380px; border-radius: 12px; margin-top: 10px; border: 1px solid var(--cp-border); }
+    .leaflet-popup-content { font-family: inherit; font-size: 0.84rem; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--cp-border); white-space: nowrap; }
+    th { color: var(--cp-text-soft); font-size: 0.72rem; text-transform: uppercase; letter-spacing: .05em; font-weight: 700; }
+    tr:last-child td { border-bottom: 0; }
+    .tbl-scroll { max-height: 340px; overflow: auto; margin-top: 10px; border: 1px solid var(--cp-border); border-radius: 12px; }
+    .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; background: var(--cp-accent-soft); color: var(--cp-accent); }
+    .pill.live { background: rgba(22,163,74,.14); color: var(--cp-success); }
+    .pill.gps { background: rgba(245,158,11,.16); color: var(--cp-warning); }
+    .muted { color: var(--cp-text-soft); }
+    .mono { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+    .filter-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+    .filter-row input {
+      font-family: inherit; font-size: 0.85rem; padding: 7px 12px; border-radius: 999px;
+      border: 1px solid var(--cp-border); background: var(--cp-surface-soft); color: var(--cp-text); min-width: 200px;
+    }
+    .empty { color: var(--cp-text-soft); font-size: 0.86rem; padding: 18px 4px; text-align: center; }
+    .gate { max-width: 420px; margin: 60px auto; text-align: center; }
+    .gate input { font-size: 0.95rem; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--cp-border); background: var(--cp-surface); color: var(--cp-text); width: 100%; margin: 14px 0; }
+    .err-banner { background: rgba(220,38,38,.1); color: var(--cp-danger); border: 1px solid rgba(220,38,38,.3); border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; font-size: 0.88rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <div>
+        <div class="eyebrow">Nordkapp Roadtrip</div>
+        <h1>📊 Traffic Analytics</h1>
+        <div class="sub">Who visited, when, from which device — live and historical.</div>
+      </div>
+      <div class="toolbar">
+        <label class="switch"><input type="checkbox" id="autoToggle" checked /> Auto-refresh</label>
+        <button class="btn icon" id="themeBtn" title="Toggle light / dark">🌗</button>
+        <button class="btn" id="refreshBtn" title="Refresh now">↻ Refresh</button>
+        <a class="btn primary" href="./index.html">← Back to trip</a>
+      </div>
+    </header>
+
+    <p class="status" id="status"><span class="dot" id="statusDot"></span><span id="statusText">Loading…</span></p>
+
+    <div id="gate" class="gate" hidden>
+      <h2>🔒 Analytics access</h2>
+      <p class="muted">This dashboard shows visitor IPs and locations, so it's protected by an access key.</p>
+      <input type="password" id="keyInput" placeholder="Enter analytics key" autocomplete="off" />
+      <button class="btn primary" id="keyBtn">Unlock</button>
+    </div>
+
+    <div id="dash" hidden>
+      <div id="errBanner" class="err-banner" hidden></div>
+
+      <div class="cards" id="cards"></div>
+
+      <div class="panel">
+        <h2><span>Visits over time</span><span class="hint" id="visitsHint">Click a day to drill into hours</span></h2>
+        <div class="chart-box"><canvas id="visitsChart"></canvas></div>
+        <div class="crumbs" id="visitsCrumbs"></div>
+      </div>
+
+      <div class="grid two">
+        <div class="panel small"><h2>Device type</h2><div class="chart-box"><canvas id="deviceTypeChart"></canvas></div></div>
+        <div class="panel small"><h2>People</h2><div class="chart-box"><canvas id="peopleChart"></canvas></div></div>
+        <div class="panel small"><h2>Browsers</h2><div class="chart-box"><canvas id="browserChart"></canvas></div></div>
+        <div class="panel small"><h2>Operating systems</h2><div class="chart-box"><canvas id="osChart"></canvas></div></div>
+        <div class="panel small"><h2>Devices</h2><div class="chart-box"><canvas id="deviceChart"></canvas></div></div>
+        <div class="panel small"><h2>Pages</h2><div class="chart-box"><canvas id="pageChart"></canvas></div></div>
+      </div>
+
+      <div class="panel">
+        <h2><span>Where visitors are</span><span class="hint">🟢 precise GPS · 🔵 approximate (IP)</span></h2>
+        <div id="map"></div>
+      </div>
+
+      <div class="grid two">
+        <div class="panel small"><h2>Countries</h2><div class="chart-box"><canvas id="countryChart"></canvas></div></div>
+        <div class="panel small"><h2>Cities</h2><div class="chart-box"><canvas id="cityChart"></canvas></div></div>
+      </div>
+
+      <div class="panel">
+        <h2><span>Live now</span><span class="hint" id="liveHint"></span></h2>
+        <div class="tbl-scroll">
+          <table>
+            <thead><tr><th>Who</th><th>Device</th><th>Type</th><th>Page</th><th>Location</th><th>IP</th><th>Seen</th><th>Session</th></tr></thead>
+            <tbody id="liveBody"></tbody>
+          </table>
+        </div>
+        <div class="empty" id="liveEmpty" hidden>No one is online right now.</div>
+      </div>
+
+      <div class="panel">
+        <h2><span>Recent activity</span><span class="hint">last 200 events</span></h2>
+        <div class="filter-row">
+          <input type="text" id="recentFilter" placeholder="Filter by name, device, page, country…" />
+          <span class="muted" id="recentCount"></span>
+        </div>
+        <div class="tbl-scroll">
+          <table>
+            <thead><tr><th>When</th><th>Type</th><th>Who</th><th>Device</th><th>OS / Browser</th><th>Page</th><th>Location</th><th>IP</th></tr></thead>
+            <tbody id="recentBody"></tbody>
+          </table>
+        </div>
+        <div class="empty" id="recentEmpty" hidden>No activity recorded yet.</div>
+      </div>
+
+      <p class="status"><span class="muted" id="footNote"></span></p>
+    </div>
+  </div>
+
+  <script>
+    const SUMMARY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/analytics/summary";
+    const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    const ACCENT = () => getComputedStyle(document.documentElement).getPropertyValue("--cp-accent").trim() || "#b11f4b";
+
+    // A pleasant categorical palette (works in both themes).
+    const PALETTE = ["#b11f4b","#2f6fe0","#16a34a","#f59e0b","#8b5cf6","#0ea5e9","#ef4444","#14b8a6","#ec4899","#84cc16","#f97316","#6366f1"];
+
+    // --- access key (sensitive data is gated when ANALYTICS_KEY is set server-side) ---
+    function readKeyFromHash() {
+      const m = (location.hash || "").match(/key=([^&]+)/);
+      return m ? decodeURIComponent(m[1]) : "";
+    }
+    let analyticsKey = readKeyFromHash() || (() => { try { return localStorage.getItem("naAnalyticsKey") || ""; } catch { return ""; } })();
+    if (readKeyFromHash()) { try { localStorage.setItem("naAnalyticsKey", analyticsKey); } catch {} history.replaceState(null, "", location.pathname); }
+
+    const $ = (id) => document.getElementById(id);
+    const fmtNum = (n) => (n == null ? "—" : n.toLocaleString());
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+    const relTime = (t) => {
+      const s = Math.max(0, (Date.now() - t) / 1000);
+      if (s < 45) return "just now";
+      if (s < 90) return "1 min ago";
+      if (s < 3600) return Math.round(s / 60) + " min ago";
+      if (s < 7200) return "1 hr ago";
+      if (s < 86400) return Math.round(s / 3600) + " hr ago";
+      return Math.round(s / 86400) + " d ago";
+    };
+    const clock = (t) => { try { return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); } catch { return ""; } };
+    const dateTime = (t) => { try { return new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
+    const fmtDur = (ms) => { const m = Math.round(ms / 60000); if (m < 1) return "<1m"; if (m < 60) return m + "m"; return Math.floor(m/60) + "h " + (m%60) + "m"; };
+    const geoStr = (g) => g ? [g.city, g.region, g.country].filter(Boolean).join(", ") : "";
+
+    // --- theme toggle ---
+    $("themeBtn").addEventListener("click", () => {
+      const cur = document.documentElement.getAttribute("data-theme");
+      const next = cur === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("naTheme", next); } catch {}
+      if (lastData) render(lastData); // recolour charts for the new theme
+    });
+
+    // --- charts ---
+    Chart.defaults.font.family = '"Segoe UI", Aptos, Calibri, -apple-system, sans-serif';
+    const charts = {};
+    function gridColor() { return document.documentElement.getAttribute("data-theme") === "dark" ? "rgba(255,255,255,.08)" : "rgba(0,0,0,.07)"; }
+    function tickColor() { return getComputedStyle(document.documentElement).getPropertyValue("--cp-text-muted").trim() || "#666"; }
+
+    function makeBar(id, labels, data, label, onClick) {
+      if (charts[id]) charts[id].destroy();
+      const ctx = $(id);
+      charts[id] = new Chart(ctx, {
+        type: "bar",
+        data: { labels, datasets: [{ label, data, backgroundColor: ACCENT(), borderRadius: 6, maxBarThickness: 46 }] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          onClick: onClick ? (evt, els) => { if (els && els.length) onClick(els[0].index); } : undefined,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { display: false }, ticks: { color: tickColor(), maxRotation: 0, autoSkip: true } },
+            y: { beginAtZero: true, grid: { color: gridColor() }, ticks: { color: tickColor(), precision: 0 } },
+          },
+        },
+      });
+      if (onClick) ctx.style.cursor = "pointer";
+    }
+
+    function makeDoughnut(id, rows) {
+      if (charts[id]) charts[id].destroy();
+      if (!rows || !rows.length) { const c = $(id).getContext("2d"); c.clearRect(0,0,$(id).width,$(id).height); return; }
+      charts[id] = new Chart($(id), {
+        type: "doughnut",
+        data: { labels: rows.map(r => r.key), datasets: [{ data: rows.map(r => r.count), backgroundColor: rows.map((_, i) => PALETTE[i % PALETTE.length]), borderWidth: 0 }] },
+        options: {
+          responsive: true, maintainAspectRatio: false, cutout: "58%",
+          plugins: { legend: { position: "right", labels: { color: tickColor(), boxWidth: 12, padding: 8, font: { size: 11 } } } },
+        },
+      });
+    }
+
+    function makeHBar(id, rows) {
+      if (charts[id]) charts[id].destroy();
+      if (!rows || !rows.length) { const c = $(id).getContext("2d"); c.clearRect(0,0,$(id).width,$(id).height); return; }
+      charts[id] = new Chart($(id), {
+        type: "bar",
+        data: { labels: rows.map(r => r.key), datasets: [{ data: rows.map(r => r.count), backgroundColor: rows.map((_, i) => PALETTE[i % PALETTE.length]), borderRadius: 5 }] },
+        options: {
+          indexAxis: "y", responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { x: { beginAtZero: true, grid: { color: gridColor() }, ticks: { color: tickColor(), precision: 0 } }, y: { grid: { display: false }, ticks: { color: tickColor() } } },
+        },
+      });
+    }
+
+    // --- map ---
+    let map = null, markersLayer = null;
+    function ensureMap() {
+      if (map) return;
+      map = L.map("map", { scrollWheelZoom: false }).setView([64, 16], 3);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+      markersLayer = L.layerGroup().addTo(map);
+    }
+    function renderMap(locations) {
+      ensureMap();
+      markersLayer.clearLayers();
+      const pts = [];
+      (locations || []).forEach((l) => {
+        if (typeof l.lat !== "number" || typeof l.lon !== "number") return;
+        const gps = l.source === "gps";
+        const color = gps ? "#16a34a" : "#2f6fe0";
+        const m = L.circleMarker([l.lat, l.lon], {
+          radius: l.live ? 9 : 7, color, fillColor: color, fillOpacity: l.live ? 0.85 : 0.5, weight: l.live ? 3 : 1.5,
+        });
+        m.bindPopup(
+          `<b>${esc(l.name)}</b>${l.live ? " · <span style='color:#16a34a'>live</span>" : ""}<br>` +
+          `${esc(l.device || "")}<br>` +
+          `${esc(l.place || "")}<br>` +
+          `<small>${gps ? "📍 precise GPS" : "🌐 approx (IP)"} · ${esc(relTime(l.lastSeen))}</small>`
+        );
+        m.addTo(markersLayer);
+        pts.push([l.lat, l.lon]);
+      });
+      if (pts.length) { try { map.fitBounds(pts, { padding: [40, 40], maxZoom: 11 }); } catch {} }
+    }
+
+    // --- drill-down state for the visits chart ---
+    let drillDay = null;
+    let lastData = null;
+
+    function renderVisits(d) {
+      const crumbs = $("visitsCrumbs");
+      if (drillDay) {
+        const dh = (d.series.dayHours || []);
+        makeBar("visitsChart", dh.map(h => h.hour + ":00"), dh.map(h => h.events), "Events");
+        crumbs.innerHTML = `<a id="visitsBack">← All days</a> &nbsp;·&nbsp; Hourly breakdown for <b>${esc(drillDay)}</b>`;
+        const back = $("visitsBack");
+        if (back) back.onclick = () => { drillDay = null; refresh(); };
+        $("visitsHint").textContent = "Hourly view";
+      } else {
+        const daily = d.series.daily || [];
+        makeBar("visitsChart", daily.map(x => x.date.slice(5)), daily.map(x => x.pageviews), "Page views", (i) => {
+          drillDay = daily[i] && daily[i].date; if (drillDay) refresh();
+        });
+        crumbs.innerHTML = daily.length ? `${daily.length} day(s) of history · tap a bar to see that day's hours` : "";
+        $("visitsHint").textContent = "Click a day to drill into hours";
+      }
+    }
+
+    function renderCards(t) {
+      $("cards").innerHTML = [
+        ["Live now", `${fmtNum(t.liveNow)}`, "live"],
+        ["Visitors", fmtNum(t.visitors), ""],
+        ["Sessions", fmtNum(t.sessions), ""],
+        ["Page views", fmtNum(t.pageviews), ""],
+        ["Events", fmtNum(t.events), ""],
+        ["Active time", fmtDur(t.activeMs), ""],
+      ].map(([k, v, cls]) => `<div class="stat ${cls}"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+    }
+
+    function renderLive(live) {
+      const body = $("liveBody");
+      $("liveHint").textContent = live.length ? `${live.length} online` : "";
+      $("liveEmpty").hidden = live.length > 0;
+      body.innerHTML = live.map((l) => {
+        const loc = l.gps && l.gps.place ? `📍 ${esc(l.gps.place)}` : geoStr(l.geo) ? `🌐 ${esc(geoStr(l.geo))}` : "<span class='muted'>—</span>";
+        return `<tr>
+          <td><span class="pill live">${esc(l.name)}</span></td>
+          <td>${esc(l.device || "—")}</td>
+          <td>${esc(l.deviceType || "—")}</td>
+          <td class="mono">${esc(l.page || "/")}</td>
+          <td>${loc}${l.gps ? " <span class='pill gps'>GPS</span>" : ""}</td>
+          <td class="mono muted">${esc(l.ip || "—")}</td>
+          <td class="muted">${esc(relTime(l.lastSeen))}</td>
+          <td class="muted">${fmtDur(l.durationMs)}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    let recentCache = [];
+    function renderRecent(recent) {
+      recentCache = recent || [];
+      applyRecentFilter();
+    }
+    function applyRecentFilter() {
+      const q = ($("recentFilter").value || "").toLowerCase().trim();
+      const rows = recentCache.filter((r) => {
+        if (!q) return true;
+        return [r.name, r.device, r.os, r.browser, r.page, r.event, r.ip, geoStr(r.geo)].some((x) => String(x || "").toLowerCase().includes(q));
+      });
+      $("recentEmpty").hidden = rows.length > 0;
+      $("recentCount").textContent = q ? `${rows.length} of ${recentCache.length}` : `${recentCache.length} events`;
+      $("recentBody").innerHTML = rows.map((r) => {
+        const typeLabel = r.type === "event" ? esc(r.event || "event") : r.type;
+        const loc = r.gps && r.gps.place ? `📍 ${esc(r.gps.place)}` : geoStr(r.geo) ? esc(geoStr(r.geo)) : "<span class='muted'>—</span>";
+        return `<tr>
+          <td class="muted">${esc(dateTime(r.ts))}</td>
+          <td><span class="pill">${esc(typeLabel)}</span></td>
+          <td>${esc(r.name || "—")}</td>
+          <td>${esc(r.device || "—")}</td>
+          <td class="muted">${esc((r.os || "") + " · " + (r.browser || ""))}</td>
+          <td class="mono">${esc(r.page || "/")}</td>
+          <td>${loc}</td>
+          <td class="mono muted">${esc(r.ip || "—")}</td>
+        </tr>`;
+      }).join("");
+    }
+    $("recentFilter").addEventListener("input", applyRecentFilter);
+
+    function render(d) {
+      lastData = d;
+      renderCards(d.totals);
+      renderVisits(d);
+      makeDoughnut("deviceTypeChart", d.byDeviceType);
+      makeHBar("peopleChart", d.byPerson);
+      makeDoughnut("browserChart", d.byBrowser);
+      makeDoughnut("osChart", d.byOS);
+      makeHBar("deviceChart", d.byDevice);
+      makeHBar("pageChart", d.byPage);
+      makeHBar("countryChart", d.byCountry);
+      makeHBar("cityChart", d.byCity);
+      renderMap(d.locations);
+      renderLive(d.live);
+      renderRecent(d.recent);
+      $("footNote").textContent = `Updated ${clock(d.generatedAt)} · timezone ${d.tz}`;
+    }
+
+    function setStatus(cls, text) { $("statusDot").className = "dot " + cls; $("statusText").textContent = text; }
+
+    async function refresh() {
+      try {
+        setStatus("warn", "Refreshing…");
+        const url = new URL(SUMMARY_URL);
+        url.searchParams.set("tz", TZ);
+        if (drillDay) url.searchParams.set("day", drillDay);
+        const headers = {};
+        if (analyticsKey) headers["x-analytics-key"] = analyticsKey;
+        const r = await fetch(url.toString(), { headers, cache: "no-store" });
+        if (r.status === 401) { showGate(); return; }
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const d = await r.json();
+        $("gate").hidden = true; $("dash").hidden = false; $("errBanner").hidden = true;
+        render(d);
+        const live = d.totals.liveNow;
+        setStatus(live > 0 ? "live" : "ok", live > 0 ? `${live} online · live` : "Up to date");
+      } catch (e) {
+        setStatus("err", "Couldn't load analytics");
+        $("dash").hidden = false;
+        $("errBanner").hidden = false;
+        $("errBanner").textContent = "Failed to reach the analytics service. " + (navigator.onLine ? "Please try again." : "You appear to be offline.");
+      }
+    }
+
+    function showGate() {
+      $("dash").hidden = true; $("gate").hidden = false;
+      setStatus("err", "Access key required");
+    }
+    $("keyBtn").addEventListener("click", () => {
+      analyticsKey = $("keyInput").value.trim();
+      try { localStorage.setItem("naAnalyticsKey", analyticsKey); } catch {}
+      $("gate").hidden = true; refresh();
+    });
+    $("keyInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("keyBtn").click(); });
+
+    // --- auto-refresh ---
+    let timer = null;
+    function startTimer() { if (!timer) timer = setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 15000); }
+    function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
+    $("autoToggle").addEventListener("change", (e) => { if (e.target.checked) { startTimer(); refresh(); } else stopTimer(); });
+    $("refreshBtn").addEventListener("click", refresh);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && $("autoToggle").checked) refresh(); });
+
+    refresh();
+    startTimer();
+  </script>
+</body>
+</html>

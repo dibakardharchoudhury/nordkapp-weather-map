@@ -16,7 +16,7 @@
 // new build ships — the classic stale-PWA discrepancy between two devices. Serving
 // the document network-first means an online launch always gets the current page,
 // while an offline launch still falls back to the cached shell.
-const VERSION = "v38";
+const VERSION = "v39";
 const SHELL_CACHE = `nordkapp-shell-${VERSION}`;
 const TILE_CACHE = `nordkapp-tiles-${VERSION}`;
 const DATA_CACHE = `nordkapp-data-${VERSION}`;
@@ -25,6 +25,7 @@ const TILE_MAX = 600; // soft cap so the tile cache can't grow without bound
 const SHELL = [
   "./",
   "./index.html",
+  "./analytics.html",
   "./manifest.webmanifest",
   "./icon.svg",
   "./icon-maskable.svg",

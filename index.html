@@ -732,6 +732,7 @@
         <button class="btn icon" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">🌗</button>
         <button class="btn" id="briefBtn" title="AI summary for today">✨ Today's Summary</button>
         <button class="btn" id="driveBtn" title="Together mode — live family locations" aria-pressed="false">👫 Together</button>
+        <button class="btn" id="analyticsBtn" title="Traffic analytics — who, when &amp; from where">📊 Analytics</button>
         <button class="btn primary" id="refreshBtn" title="Refresh">↻ Refresh</button>
       </div>
     </header>
@@ -824,7 +825,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v38";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v39";                  // front-end build — keep in lock-step with sw.js VERSION
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
 
     // ---- Live data source: the Nordkapp "Google My Maps" map ----
@@ -2200,6 +2201,7 @@
     const CHAT_PROXY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/chat";
     const STREAM_PROXY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/chat/stream";
     const TOGETHER_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/together";
+    const ANALYTICS_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/analytics";
     const TOGETHER_ROOM = "nordkapp-fam-7e3a";  // shared family session for this trip
     const TOGETHER_POLL_MS = 5000;   // refresh everyone's live position every 5 s — real-time to a human, easy on battery/radio
     const TOGETHER_STALE_MS = 20000; // no fresh fix for >20 s ⇒ stop reporting & show that car "signal lost" (tunnel / locked)
@@ -2420,6 +2422,7 @@
 
       chatAdd("user", chatMarkdown(text));
       chatHistory.push({ role: "user", content: text });
+      try { if (window.naTrack) window.naTrack("chat_send"); } catch {}
 
       chatBusy = true;
       const sendBtn = document.getElementById("chatSend");
@@ -2574,6 +2577,74 @@
       document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") check(); });
       window.addEventListener("online", check);
       setInterval(check, 3600000);
+    }
+
+    // ============================================================
+    //  Traffic analytics beacon — privacy-aware, fire-and-forget.
+    //  A stable per-browser visitor id (device), a per-load session id, a friendly
+    //  renamable device label, plus who (Together identity) when known. Sends a
+    //  pageview on load, a heartbeat every 30 s while the tab is visible, and a few
+    //  named events. GPS is attached only when we already have a fresh fix (the user
+    //  has opted into location for the map / Together) — we never prompt just to track.
+    // ============================================================
+    let naVisitorId = "", naSessionId = "", naDeviceName = "";
+    function naUuid() {
+      try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch {}
+      return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+        const r = Math.random() * 16 | 0; return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
+      });
+    }
+    function naDeviceLabel() {
+      const ua = navigator.userAgent || "";
+      const os = /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android"
+        : /iPhone|iPad|iPod/.test(ua) ? "iOS" : /Mac OS X|Macintosh/.test(ua) ? "macOS"
+        : /CrOS/.test(ua) ? "ChromeOS" : /Linux/.test(ua) ? "Linux" : "Device";
+      const br = /Edg\//.test(ua) ? "Edge" : /OPR\/|Opera/.test(ua) ? "Opera"
+        : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /Firefox/.test(ua) ? "Firefox"
+        : /Chrome\/|CriOS/.test(ua) ? "Chrome" : /Safari/.test(ua) ? "Safari" : "Browser";
+      return `${os} · ${br}`;
+    }
+    function naFreshGps() {
+      // Only share a position we already hold and that's recent (same freshness rule as Together).
+      if (!userLoc || (Date.now() - userFixAt) > TOGETHER_STALE_MS) return null;
+      const g = { lat: userLoc.lat, lng: userLoc.lon };
+      if (typeof userLoc.acc === "number") g.acc = Math.round(userLoc.acc);
+      try { const p = famPlaceFor(userLoc.lat, userLoc.lon); if (p) g.place = p; } catch {}
+      return g;
+    }
+    function naSend(type, extra) {
+      try {
+        const body = JSON.stringify(Object.assign({
+          type, visitorId: naVisitorId, sessionId: naSessionId,
+          name: (myIdentity || togetherName || "") || undefined,
+          device: naDeviceName, path: location.pathname || "/",
+          screen: `${screen.width}x${screen.height}`,
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone || undefined,
+          ref: document.referrer ? new URL(document.referrer).hostname : undefined,
+        }, naFreshGps() ? { ...naFreshGps() } : {}, extra || {}));
+        // Prefer sendBeacon (survives unload); fall back to fetch keepalive.
+        if (navigator.sendBeacon) navigator.sendBeacon(ANALYTICS_URL, new Blob([body], { type: "application/json" }));
+        else fetch(ANALYTICS_URL, { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
+      } catch { /* analytics must never break the app */ }
+    }
+    function naTrack(event) { naSend("event", { event }); }
+    function initAnalytics() {
+      try {
+        naVisitorId = localStorage.getItem("naVisitor") || naUuid();
+        localStorage.setItem("naVisitor", naVisitorId);
+      } catch { naVisitorId = naUuid(); }
+      naSessionId = naUuid();
+      try { naDeviceName = localStorage.getItem("naDevice") || naDeviceLabel(); }
+      catch { naDeviceName = naDeviceLabel(); }
+      window.naTrack = naTrack; // let other modules (Together, chat) report named events
+      naSend("pageview");
+      let hb = null;
+      const startHb = () => { if (!hb) hb = setInterval(() => naSend("heartbeat"), 30000); };
+      const stopHb = () => { if (hb) { clearInterval(hb); hb = null; } };
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") { naSend("heartbeat"); startHb(); } else stopHb();
+      });
+      if (document.visibilityState === "visible") startHb();
     }
 
     function initChat() {
@@ -3451,6 +3522,7 @@
       renderTogether();
       acquireFix(true);   // grab a fix immediately so the family sees us right away
       pushTogether();
+      try { if (window.naTrack) window.naTrack("together_join"); } catch {}
     }
     // Stop broadcasting and return to the picker, keeping this device's bound identity
     // so you can rejoin as yourself or reset the device. The heartbeat keeps peeking,
@@ -3645,6 +3717,8 @@
     function initExtras() {
       const driveBtn = document.getElementById("driveBtn");
       if (driveBtn) driveBtn.addEventListener("click", toggleDrive);
+      const analyticsBtn = document.getElementById("analyticsBtn");
+      if (analyticsBtn) analyticsBtn.addEventListener("click", () => { location.href = "./analytics.html"; });
       const driveClose = document.getElementById("driveClose");
       if (driveClose) driveClose.addEventListener("click", stopDrive);
       const driveMin = document.getElementById("driveMin");
@@ -3699,6 +3773,7 @@
     initExtras();
     initBriefing();
     initVersion();
+    initAnalytics();
     boot();
   </script>
 </body>

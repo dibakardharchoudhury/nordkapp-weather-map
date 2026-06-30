@@ -11,6 +11,7 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import { DefaultAzureCredential } from "@azure/identity";
 import { getTripContext } from "./context.js";
+import { recordAnalytics, analyticsSummary } from "./analytics.js";
 
 const credential = new DefaultAzureCredential();
 const SCOPE = "https://cognitiveservices.azure.com/.default";
@@ -206,6 +207,27 @@ function handleTogether(req, res) {
   res.json({ ok: true, members, serverTime: Date.now() });
 }
 app.post("/api/together", handleTogether);
+
+// === Traffic analytics ===
+// Ingest is open (any visitor's browser beacons here) and must NEVER fail the page;
+// the dashboard read is gated behind ANALYTICS_KEY when one is configured, because
+// the summary exposes IPs, geo and GPS. The per-IP rate limiter covers both.
+app.post("/api/analytics", async (req, res) => {
+  try { await recordAnalytics(req.body, req.headers["user-agent"], clientKey(req)); }
+  catch (e) { console.error("analytics ingest failed:", e?.message || e); }
+  res.json({ ok: true });
+});
+
+const ANALYTICS_KEY = process.env.ANALYTICS_KEY || "";
+app.get("/api/analytics/summary", (req, res) => {
+  if (ANALYTICS_KEY) {
+    const k = req.get("x-analytics-key") || req.query.key || "";
+    if (k !== ANALYTICS_KEY) return res.status(401).json({ error: "analytics key required" });
+  }
+  const tz = typeof req.query.tz === "string" ? req.query.tz : "UTC";
+  const day = typeof req.query.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.day) ? req.query.day : null;
+  res.json(analyticsSummary({ tz, day }));
+});
 
 // Sanitise one message's content. Accepts either a plain non-empty string, or a
 // multimodal array of {type:"text"} / {type:"image_url"} parts (Snap & Translate).

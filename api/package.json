@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node together.test.mjs && node together.scenarios.test.mjs"
+    "test": "node together.test.mjs && node together.scenarios.test.mjs && node analytics.test.mjs"
   },
   "engines": {
     "node": ">=20"
