@@ -242,7 +242,7 @@
   <script>
     const SUMMARY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/analytics/summary";
     const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    const NA_BUILD = "v44"; // keep in lock-step with version.json / index.html APP_VERSION
+    const NA_BUILD = "v45"; // keep in lock-step with version.json / index.html APP_VERSION
     const ACCENT = () => getComputedStyle(document.documentElement).getPropertyValue("--cp-accent").trim() || "#b11f4b";
 
     // A pleasant categorical palette (works in both themes).
@@ -568,7 +568,11 @@
         const r = await fetch("./version.json?ts=" + Date.now(), { cache: "no-store" });
         if (!r.ok) return;
         const latest = (await r.json()).version;
-        if (latest && latest !== NA_BUILD) $("updateBar").hidden = false;
+        // Reflect the CURRENT comparison every time (never a one-way latch): a
+        // momentarily stale version.json during a service-worker handover used to
+        // flip the bar on and leave it stuck forever. Hiding on a match lets the
+        // next check (visibility-change / interval) self-correct a false alarm.
+        if (latest) $("updateBar").hidden = (latest === NA_BUILD);
       } catch { /* offline — no false alarm */ }
     }
     // A real "get me the latest" button: an old service worker can keep serving a

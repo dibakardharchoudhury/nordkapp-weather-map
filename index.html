@@ -825,7 +825,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v44";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v45";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -2537,7 +2537,6 @@
 
       let updateReady = false;
       async function check() {
-        if (updateReady) return; // already flagged — leave the "update ready" state
         setState("checking", APP_VERSION, "Checking for updates…");
         try {
           // Nudge the service worker to look for a new build too.
@@ -2553,6 +2552,10 @@
             setState("stale", `${APP_VERSION} → ${latest} · update — tap to reload`,
               `A newer build (${latest}) is available. Tap to reload.`);
           } else {
+            // Reflect the CURRENT comparison (no one-way latch): a momentarily
+            // stale version.json during a service-worker handover must be able to
+            // clear itself on the next check instead of sticking on "update ready".
+            updateReady = false;
             setState("latest", APP_VERSION, `You're on the latest build (${APP_VERSION}).`);
           }
         } catch {
