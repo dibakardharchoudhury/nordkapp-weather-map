@@ -145,7 +145,7 @@
 
     <p class="status" id="status"><span class="dot" id="statusDot"></span><span id="statusText">Loading…</span></p>
 
-    <div id="updateBar" hidden style="display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap;background:var(--cp-accent-soft);border:1px solid var(--cp-accent);color:var(--cp-text);padding:10px 14px;border-radius:12px;margin:0 0 14px;font-size:.9rem;">
+    <div id="updateBar" style="display:none;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap;background:var(--cp-accent-soft);border:1px solid var(--cp-accent);color:var(--cp-text);padding:10px 14px;border-radius:12px;margin:0 0 14px;font-size:.9rem;">
       <span>🔄 A newer version of the dashboard is available.</span>
       <button class="btn primary" id="updateBtn" type="button">Reload</button>
     </div>
@@ -242,7 +242,7 @@
   <script>
     const SUMMARY_URL = "https://nordkapp-ai-proxy.azurewebsites.net/api/analytics/summary";
     const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    const NA_BUILD = "v45"; // keep in lock-step with version.json / index.html APP_VERSION
+    const NA_BUILD = "v46"; // keep in lock-step with version.json / index.html APP_VERSION
     const ACCENT = () => getComputedStyle(document.documentElement).getPropertyValue("--cp-accent").trim() || "#b11f4b";
 
     // A pleasant categorical palette (works in both themes).
@@ -568,11 +568,12 @@
         const r = await fetch("./version.json?ts=" + Date.now(), { cache: "no-store" });
         if (!r.ok) return;
         const latest = (await r.json()).version;
-        // Reflect the CURRENT comparison every time (never a one-way latch): a
-        // momentarily stale version.json during a service-worker handover used to
-        // flip the bar on and leave it stuck forever. Hiding on a match lets the
-        // next check (visibility-change / interval) self-correct a false alarm.
-        if (latest) $("updateBar").hidden = (latest === NA_BUILD);
+        // Toggle style.display directly: the bar carries an inline display:flex, so
+        // the `hidden` attribute/property is OVERRIDDEN by it (inline style wins over
+        // the UA [hidden]{display:none} rule) — setting .hidden could never hide it,
+        // which is what made the banner permanently stuck. Reflect the CURRENT
+        // comparison every time so a transient stale version.json self-corrects.
+        if (latest) $("updateBar").style.display = (latest === NA_BUILD) ? "none" : "flex";
       } catch { /* offline — no false alarm */ }
     }
     // A real "get me the latest" button: an old service worker can keep serving a
