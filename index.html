@@ -825,7 +825,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v42";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v43";                  // front-end build — keep in lock-step with sw.js VERSION
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
 
     // ---- Live data source: the Nordkapp "Google My Maps" map ----
@@ -1283,7 +1283,7 @@
     function popupHtml(stop, day, color) {
       const w = stop._wx;
       const loc = addrText(stop);
-      const locHtml = loc ? `<div class="pop-loc">${loc}</div>` : "";
+      const locHtml = loc ? `<div class="pop-loc">${chatEsc(loc)}</div>` : "";
       const gmLink = gmapsLink(stop);
       const drive = driveLine(stop, day);
       const driveHtml = drive ? `<div class="pop-sub">${drive}</div>` : "";
@@ -1297,7 +1297,7 @@
           : stop._wxState === "fail"
             ? `<div class="pop-sub">Weather unavailable</div>`
             : `<div class="pop-sub">Loading weather…</div>`;
-      return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${stop.name}</div>
+      return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${chatEsc(stop.name)}</div>
               <div class="pop-day" style="color:${color}">${day.label} · ${ordinalDate(day.date)} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${driveHtml}${locHtml}${wx}
               <div class="pop-sub"><a href="${gmLink}" target="_blank" rel="noopener">Open in Google Maps ↗</a></div>`;
     }
@@ -1309,7 +1309,7 @@
       const g = stop._g;
       const done = stop._gState === "done";
       const loc = addrText(stop);
-      const locLine = loc ? `<div class="det-loc">${loc}</div>` : "";
+      const locLine = loc ? `<div class="det-loc">${chatEsc(loc)}</div>` : "";
       const gmLink = gmapsLink(stop);
       const drive = driveLine(stop, day);
       const condMeta = w && (w.wind != null || w.pprob != null)
@@ -1339,7 +1339,7 @@
       return `<div class="det-head">
                 <span class="det-icon">${TYPE_ICON[stop.type] || "📍"}</span>
                 <div>
-                  <div class="det-name">${stop.name}</div>
+                  <div class="det-name">${chatEsc(stop.name)}</div>
                   <div class="det-sub" style="color:${color}">${day.label} · ${ordinalDate(day.date)}</div>
                   ${drive ? `<div class="det-day-meta">${drive}</div>` : ""}
                   ${locLine}
@@ -1416,12 +1416,12 @@
           const bits = [];
           if (x.coffee) bits.push(`<span class="near-chip">☕ coffee</span>`);
           if (x.toilet) bits.push(`<span class="near-chip">🚹 toilet</span>`);
-          if (x.hours) bits.push(`<span class="near-hours">⏰ ${hoursLabel(x.hours)}</span>`);
+          if (x.hours) bits.push(`<span class="near-hours">⏰ ${chatEsc(hoursLabel(x.hours))}</span>`);
           const sub = bits.length ? `<div class="near-sub">${bits.join("")}</div>` : "";
           return `<div class="near-item">` +
             `<span class="near-ic">${x.icon}</span>` +
             `<div class="near-body">` +
-              `<div class="near-line"><span class="near-name">${x.name}</span><span class="near-dist">${distLabel(x.dist)}</span></div>` +
+              `<div class="near-line"><span class="near-name">${chatEsc(x.name)}</span><span class="near-dist">${distLabel(x.dist)}</span></div>` +
               sub +
             `</div>` +
             `</div>`;
@@ -2276,7 +2276,7 @@
       // Protect inline code first so bold/italic/link rules never touch its contents.
       s = s.replace(/`([^`]+)`/g, (_m, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
       s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-        (_m, t, u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${t}</a>`);
+        (_m, t, u) => `<a href="${u.replace(/"/g, "%22")}" target="_blank" rel="noopener noreferrer">${t}</a>`);
       s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
       s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
       s = s.replace(/\u0000(\d+)\u0000/g, (_m, i) => `<code>${codes[i]}</code>`);
