@@ -318,8 +318,8 @@ async function buildGroundedMessages(body) {
     // client sends every day + stop with live weather + POIs (~77 KB measured for this
     // 18-day / 156-stop trip, a bit more once every stop's POIs are enriched). The old
     // 60 KB cap silently truncated the JSON mid-trip, so the model only saw ~14 days
-    // and swore the rest didn't exist. 200 KB fits the full trip with headroom while
-    // still bounding a runaway payload.
+    // and swore the rest didn't exist. 400 KB fits the full trip with generous headroom
+    // (for longer trips / richer POIs) while still bounding a runaway payload.
     messages.push({
       role: "system",
       content:
