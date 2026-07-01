@@ -6,10 +6,10 @@ An interactive map of a southern‑Norway → Nordkapp road trip. Every stop is 
 
 ## Features
 
-- **Map** — Leaflet with marker **clustering** (156 stops stay snappy even on a throttled phone) and per‑day colored routes. Stops are **numbered in driving order** (badge on each pin + "Stop N of M" in the popup/panel). Each day's overnight stop cross‑references the next day (end of Day N is also the start of Day N+1).
-- **Weather** — MET Norway / Yr only: live "now" + daily forecast (~9‑day horizon); beyond that, a labeled seasonal normal (never a fabricated forecast).
+- **Map** — Leaflet with marker **clustering** (156 stops stay snappy even on a throttled phone), per‑day colored routes, and a **full‑screen toggle** (⛶). Stops are **numbered in driving order** (badge on each pin + "Stop N of M"). A shared overnight base is drawn as a single pin that lists the day(s) departing from it with their drive totals.
+- **Weather** — MET Norway / Yr only: live "now" + daily forecast (~9‑day horizon); beyond that, a labelled seasonal normal (never a fabricated forecast).
 - **Nearby POIs** — food, groceries and fuel with opening hours, via Photon + Nominatim (OpenStreetMap), keyless. 5 km radius, auto‑expanding to 25 km when nothing is close.
-- **AI copilot** — a chat panel and one‑tap "Today's Summary" per day, grounded strictly in your trip data (weather, hours, distances, chargers). Server‑enforced guardrails.
+- **AI copilot** — a chat panel plus one‑tap "Today's Summary" per day, grounded strictly in your trip data across the **whole trip** (weather, hours, distances, chargers). Refers to places by name — no coordinates unless you ask. Server‑enforced guardrails.
 - **Together mode** — opt‑in live family location relay (pick a name, share your pin, see the convoy).
 - **PWA** — installable, works offline (cached shell + tiles + last data), with an in‑app update prompt.
 - **Analytics** — a private traffic dashboard (`analytics.html`).
@@ -72,9 +72,16 @@ Backend App Service settings: `AOAI_ENDPOINT`, `AOAI_DEPLOYMENT`, `ALLOWED_ORIGI
 
 ```powershell
 cd api
-pwsh -NoProfile -File .\provision.ps1   # one‑time: infra + managed‑identity RBAC
-pwsh -NoProfile -File .\push.ps1         # rebuild zip + deploy
+pwsh -NoProfile -File .\provision.ps1     # one‑time: plan, web app, managed identity, app settings, AOAI role
+
+# Deploy. SCM basic publishing is disabled by policy, so briefly enable it around the zip push:
+$site = az webapp show -n nordkapp-ai-proxy -g rg-agentmcp --query id -o tsv
+az resource update --ids "$site/basicPublishingCredentialsPolicies/scm" --set properties.allow=true  --api-version 2022-09-01
+pwsh -NoProfile -File .\push.ps1           # zip server.js + context.js + analytics.js + package*.json -> az webapp deploy
+az resource update --ids "$site/basicPublishingCredentialsPolicies/scm" --set properties.allow=false --api-version 2022-09-01
 ```
+
+Verify with `GET https://<app>.azurewebsites.net/health` → `{"ok":true}`. Backend changes go live immediately (no front‑end version bump).
 
 ## Analytics dashboard
 
@@ -91,10 +98,10 @@ npm test    # Together relay + real‑world scenarios + analytics — ~1,750 ass
 
 **Front‑end (manual E2E checklist):**
 
-1. **Map is snappy** — pan/zoom the whole‑trip overview; no lag (stops cluster into count bubbles, expanding as you zoom in).
+1. **Map is snappy** — pan/zoom the whole‑trip overview; no lag (stops cluster into count bubbles, expanding as you zoom in). The ⛶ button toggles full‑screen.
 2. **Numbering** — zoom into a day; pins show 1,2,3… in driving order; a stop's popup/panel reads "Stop N of M".
 3. **Stop details** — click a pin: locality, drive‑remaining, MET now + forecast (or seasonal normal), and food/shops/fuel populate.
-4. **AI** — ask the copilot a grounded question (e.g. "which day is wettest?"); open a day's "Today's Summary".
+4. **AI** — open a day's "Today's Summary"; ask the copilot for a whole‑trip summary and confirm it covers **all** days and names places (no coordinates unless you ask).
 5. **Together** — enable, pick a name, confirm your pin shares; exit to stop.
 6. **PWA** — the version badge reads the current build; after a deploy, other devices show an update prompt.
 
@@ -103,3 +110,4 @@ npm test    # Together relay + real‑world scenarios + analytics — ~1,750 ass
 - Keyless by design: no secrets in the client or the repo; the proxy uses managed identity for Azure OpenAI.
 - Weather is MET‑only on purpose — no second, less‑reliable source is ever substituted for a forecast.
 - Untrusted strings (KML/OSM names, hours, chat output) are HTML‑escaped before rendering.
+- The AI proxy (`api/server.js`) grounds on the full trip (context capped at 400 KB) and allows up to 4000 response tokens, so whole‑trip / day‑by‑day summaries aren't truncated.
