@@ -6,7 +6,7 @@ An interactive map of a southern‑Norway → Nordkapp road trip. Every stop is 
 
 ## Features
 
-- **Map** — Leaflet with marker **clustering** (156 stops stay snappy even on a throttled phone) and per‑day colored routes. Stops are **numbered in driving order** (badge on each pin + "Stop N of M" in the popup/panel).
+- **Map** — Leaflet with marker **clustering** (156 stops stay snappy even on a throttled phone) and per‑day colored routes. Stops are **numbered in driving order** (badge on each pin + "Stop N of M" in the popup/panel). Each day's overnight stop cross‑references the next day (end of Day N is also the start of Day N+1).
 - **Weather** — MET Norway / Yr only: live "now" + daily forecast (~9‑day horizon); beyond that, a labeled seasonal normal (never a fabricated forecast).
 - **Nearby POIs** — food, groceries and fuel with opening hours, via Photon + Nominatim (OpenStreetMap), keyless. 5 km radius, auto‑expanding to 25 km when nothing is close.
 - **AI copilot** — a chat panel and one‑tap "Today's Summary" per day, grounded strictly in your trip data (weather, hours, distances, chargers). Server‑enforced guardrails.

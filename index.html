@@ -293,6 +293,7 @@
     .pop-wx .pt .lo { color: #0078d4; } .pop-wx .pt .hi { color: #dc2626; }
     .pop-sub { font-size: 0.76rem; color: #555; margin-top: 4px; }
     .pop-loc { font-size: 0.78rem; color: #1f2937; margin-top: 4px; font-weight: 600; }
+    .pop-cont { font-size: 0.75rem; color: var(--cp-accent); margin-top: 4px; font-weight: 600; }
     .pop-desc { font-size: 0.76rem; color: #374151; margin-top: 5px; line-height: 1.4; }
     .legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--cp-border); font-size: 0.8rem; color: var(--cp-text-muted); }
     .legend .lg { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
@@ -318,6 +319,8 @@
     .det-sub { font-size: 0.78rem; color: var(--cp-text-muted); text-transform: uppercase; letter-spacing: .03em; margin-top: 2px; font-weight: 600; }
     .det-day-meta { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; padding: 3px 10px; border-radius: 999px;
       background: var(--cp-accent-soft); color: var(--cp-accent); font-size: 0.8rem; font-weight: 700; }
+    .det-cont { margin-top: 6px; font-size: 0.8rem; color: var(--cp-text); background: var(--cp-surface-soft);
+      border: 1px solid var(--cp-border); border-radius: 8px; padding: 5px 10px; font-weight: 600; line-height: 1.35; }
     .det-loc { font-size: 0.9rem; color: var(--cp-text); margin-top: 5px; font-weight: 600; }
     .det-coords { margin-top: 3px; }
     .det-desc { font-size: 0.92rem; color: var(--cp-text); margin-top: 12px; line-height: 1.55; }
@@ -855,7 +858,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v53";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v54";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -1129,8 +1132,46 @@
           s._remHr = hr != null ? hr * frac : null;
           s._isStart = i === 0;
           s._isEnd = i === stops.length - 1;
+          s._contPrevDay = null; // cleared here; re-linked in the handover pass below
+          s._contNextDay = null;
         });
       });
+
+      // Overnight handover: the KML repeats each day's final stop as the NEXT day's
+      // first stop (you sleep there, then set off from there). Link the two copies so
+      // the UI can show that an end-of-day stop is also the start of the next day —
+      // and that a day's starting point is where you spent the previous night.
+      // Match on near-identical coords, or the same name within a short distance
+      // (Google My Maps sometimes nudges the two pins a little apart).
+      const sameSpot = (a, b) => {
+        if (!a || !b) return false;
+        const km = distKm(a.lat, a.lon, b.lat, b.lon);
+        if (km < 0.2) return true;
+        const nm = (x) => (x.name || "").trim().toLowerCase().replace(/\s+/g, " ");
+        return nm(a) && nm(a) === nm(b) && km < 3;
+      };
+      for (let d = 0; d < TRIP.length - 1; d++) {
+        const cur = TRIP[d].stops || [], nxt = TRIP[d + 1].stops || [];
+        if (!cur.length || !nxt.length) continue;
+        const endStop = cur[cur.length - 1], startStop = nxt[0];
+        if (sameSpot(endStop, startStop)) {
+          endStop._contNextDay = TRIP[d + 1]; // departs as next day's Stop 1
+          startStop._contPrevDay = TRIP[d];   // is the previous day's overnight (its last stop)
+        }
+      }
+    }
+    // One-line note describing a stop that hinges two days (overnight = end of one
+    // day AND start of the next), so the two identical-coordinate copies are clearly
+    // the same place. Labels come from KML → escaped.
+    function handoverNote(stop) {
+      if (stop._contNextDay) {
+        return `🌅 You set off from here tomorrow — also ${chatEsc(stop._contNextDay.label)} · Stop 1`;
+      }
+      if (stop._contPrevDay) {
+        const p = stop._contPrevDay, n = (p.stops || []).length;
+        return `🛏️ Where you spent last night — also ${chatEsc(p.label)} · Stop ${n}`;
+      }
+      return null;
     }
 
     // ============================================================
@@ -1353,6 +1394,8 @@
     function popupHtml(stop, day, color) {
       const w = stop._wx;
       const { seq, total } = stopSeq(stop, day);
+      const cont = handoverNote(stop);
+      const contHtml = cont ? `<div class="pop-cont">${cont}</div>` : "";
       const loc = addrText(stop);
       const locHtml = loc ? `<div class="pop-loc">${chatEsc(loc)}</div>` : "";
       const gmLink = gmapsLink(stop);
@@ -1369,7 +1412,7 @@
             ? `<div class="pop-sub">Weather unavailable</div>`
             : `<div class="pop-sub">Loading weather…</div>`;
       return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${chatEsc(stop.name)}</div>
-              <div class="pop-day" style="color:${color}">${day.label}${seq ? ` · Stop ${seq}/${total}` : ""} · ${ordinalDate(day.date)} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${driveHtml}${locHtml}${wx}
+              <div class="pop-day" style="color:${color}">${day.label}${seq ? ` · Stop ${seq}/${total}` : ""} · ${ordinalDate(day.date)} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${contHtml}${driveHtml}${locHtml}${wx}
               <div class="pop-sub"><a href="${gmLink}" target="_blank" rel="noopener">Open in Google Maps ↗</a></div>`;
     }
 
@@ -1380,6 +1423,7 @@
       const g = stop._g;
       const done = stop._gState === "done";
       const { seq, total } = stopSeq(stop, day);
+      const cont = handoverNote(stop);
       const loc = addrText(stop);
       const locLine = loc ? `<div class="det-loc">${chatEsc(loc)}</div>` : "";
       const gmLink = gmapsLink(stop);
@@ -1414,6 +1458,7 @@
                   <div class="det-name">${chatEsc(stop.name)}</div>
                   <div class="det-sub" style="color:${color}">${day.label}${seq ? ` · Stop ${seq} of ${total}` : ""} · ${ordinalDate(day.date)}</div>
                   ${drive ? `<div class="det-day-meta">${drive}</div>` : ""}
+                  ${cont ? `<div class="det-cont">${cont}</div>` : ""}
                   ${locLine}
                   <div class="det-coords"><a href="${gmLink}" target="_blank" rel="noopener">Open in Google Maps ↗</a></div>
                 </div>
