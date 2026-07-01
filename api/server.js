@@ -314,11 +314,17 @@ async function buildGroundedMessages(body) {
   }
   if (ctxObj != null) {
     const ctx = typeof ctxObj === "string" ? ctxObj : JSON.stringify(ctxObj);
+    // Cap the grounded context, but keep it big enough to hold the WHOLE trip. The
+    // client sends every day + stop with live weather + POIs (~77 KB measured for this
+    // 18-day / 156-stop trip, a bit more once every stop's POIs are enriched). The old
+    // 60 KB cap silently truncated the JSON mid-trip, so the model only saw ~14 days
+    // and swore the rest didn't exist. 200 KB fits the full trip with headroom while
+    // still bounding a runaway payload.
     messages.push({
       role: "system",
       content:
         "TRIP DATA (authoritative — the only source for weather, opening hours, distances, chargers, coordinates, dates):\n" +
-        ctx.slice(0, 60000),
+        ctx.slice(0, 400000),
     });
   }
   messages.push(...safeMessages);
