@@ -365,8 +365,10 @@ app.post("/api/chat", chatLimiter, async (req, res) => {
         messages,
         temperature: typeof body.temperature === "number" ? body.temperature : 0.4,
         // model-router may route to a reasoning model that spends tokens on hidden
-        // reasoning, so keep a generous default to avoid empty/truncated replies.
-        max_tokens: typeof body.max_tokens === "number" ? body.max_tokens : 1500,
+        // reasoning, so keep a generous default to avoid empty/truncated replies. It's
+        // only a CAP — short answers stop on their own; this lets a long reply (e.g. a
+        // full 18-day day-by-day summary) finish instead of cutting off mid-trip.
+        max_tokens: typeof body.max_tokens === "number" ? body.max_tokens : 4000,
       }),
     });
   } catch (e) {
@@ -424,7 +426,7 @@ app.post("/api/chat/stream", chatLimiter, async (req, res) => {
         model,
         messages: built.messages,
         temperature: typeof body.temperature === "number" ? body.temperature : 0.4,
-        max_tokens: typeof body.max_tokens === "number" ? body.max_tokens : 1500,
+        max_tokens: typeof body.max_tokens === "number" ? body.max_tokens : 4000,
         stream: true,
         stream_options: { include_usage: true },
       }),
