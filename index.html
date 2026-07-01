@@ -862,7 +862,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v59";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v60";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -1167,14 +1167,17 @@
     // A stop can be the shared overnight base for one or more days (it's each of their
     // Stop 1). Only one pin is drawn per place, so surface every day that DEPARTS from
     // here with its full drive overview (distance + time) — this is what was missing on
-    // the deduped start pins. Labels come from KML → escaped.
+    // the deduped start pins. A day with NO driving is a REST day at this base (you stay
+    // put, you don't set off), so it's left out entirely. Labels come from KML → escaped.
     function handoverNote(stop) {
-      const deps = stop._departDays;
-      if (!deps || !deps.length) return null;
+      const deps = (stop._departDays || []).filter((nd) => {
+        const { km, hr } = dayTotals(nd);
+        return km >= 0.1 || hr >= 0.02; // drop rest days (0 km / 0 min)
+      });
+      if (!deps.length) return null;
       const parts = deps.map((nd) => {
         const { km, hr } = dayTotals(nd);
-        const total = (km >= 0.1 || hr >= 0.02) ? remLabel(km, hr) : ""; // skip 0-drive rest days
-        return `${chatEsc(nd.label)}${total ? ` (${total})` : ""}`;
+        return `${chatEsc(nd.label)} (${remLabel(km, hr)})`;
       });
       return `🌅 You set off from here — ${parts.join(", ")}`;
     }
