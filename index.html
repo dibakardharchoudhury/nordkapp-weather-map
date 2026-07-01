@@ -862,7 +862,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v57";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v58";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -2958,14 +2958,20 @@
     // must-sees) so nothing is dropped but it never becomes a wall of text.
     function briefPrompt(day) {
       const names = (day.stops || []).map((s) => `${s.name} (${TYPE_LABEL[s.type] || "stop"})`);
+      const driveTotal = (day.meta || "").trim(); // e.g. "7.5 hrs · 524 km" — from the Google My Maps route
       return [
         `Write a tight, elegant "Today's Summary" for ${day.label} (${ordinalDate(day.date)}) of my Nordkapp road trip.`,
         `Use ONLY my trip data for facts (weather, distances, drive time, chargers, opening hours).`,
+        driveTotal
+          ? `Today's total driving for ${day.label} is "${driveTotal}" (straight from my Google My Maps route) — put exactly this figure in the Drive line; never say it's not listed.`
+          : `My route lists no total distance/time for ${day.label}, so say that plainly in the Drive line.`,
         ``,
         `Keep it CRISP and scannable on a phone — short lines, no padding, no information overload.`,
         `Structure (in this exact order):`,
         `🌦 **Weather** — high/low and what to wear.`,
-        `🚗 **Drive** — total distance and time, plus the smart order in a few words.`,
+        driveTotal
+          ? `🚗 **Drive** — lead with **${driveTotal}**, then the smart order in a few words.`
+          : `🚗 **Drive** — note the distance/time isn't listed, then the smart order in a few words.`,
         `⚡ **Charging** — name today's charger stop(s), or write "None needed today".`,
         `📍 **Stops** — then a bullet list covering EVERY stop below, in order.`,
         ``,
