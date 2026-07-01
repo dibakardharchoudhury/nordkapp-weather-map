@@ -57,11 +57,13 @@ function parseDayMeta(name) {
 }
 function inferType(name, idx, dayIdx, count) {
   const n = (name || "").toLowerCase();
-  if (/supercharger|charging|charge\b|ev charg/.test(n)) return "charger";
   if (dayIdx === 0 && idx === 0) return "home";
   if (/\bhome\b/.test(n)) return "home";
-  if (/camping|camp\b|hotel|motel|cabin|hytte|lodge|guest ?house|hostel|overnight/.test(n)) return "stay";
-  if (idx === count - 1) return "stay";
+  if (/supercharger|charging|charge\b|ev charg/.test(n)) return "charger";
+  // Overnight applies ONLY to a day's endpoints: its last stop (where you sleep) and
+  // its first stop (the same base). Intermediate stops are sightseeing, never an
+  // overnight — even if the name contains "camp", "lodge", "hotel", etc.
+  if (idx === 0 || idx === count - 1) return "stay";
   return "sight";
 }
 async function fetchKml(mid) {

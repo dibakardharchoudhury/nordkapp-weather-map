@@ -862,7 +862,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v58";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v59";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -1224,11 +1224,14 @@
     }
     function inferType(name, idx, dayIdx, count) {
       const n = (name || "").toLowerCase();
-      if (/supercharger|charging|charge\b|ev charg/.test(n)) return "charger";
       if (dayIdx === 0 && idx === 0) return "home";
       if (/\bhome\b/.test(n)) return "home";
-      if (/camping|camp\b|hotel|motel|cabin|hytte|lodge|guest ?house|hostel|overnight/.test(n)) return "stay";
-      if (idx === count - 1) return "stay"; // last stop of a day = overnight
+      if (/supercharger|charging|charge\b|ev charg/.test(n)) return "charger";
+      // Overnight applies ONLY to a day's endpoints: its last stop (where you sleep)
+      // and its first stop (the same base you set off from — deduped to one pin on the
+      // map). Every stop in between is sightseeing, never an overnight — even if its
+      // name happens to contain "camp", "lodge", "hotel", etc.
+      if (idx === 0 || idx === count - 1) return "stay";
       return "sight";
     }
     function folderName(folder) {
