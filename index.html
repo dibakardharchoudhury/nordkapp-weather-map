@@ -214,8 +214,8 @@
     .map-body { display: flex; align-items: stretch; }
     #leaflet { flex: 1 1 auto; width: auto; min-width: 0; height: clamp(460px, 74vh, 920px); border-radius: 0; z-index: 0; background: var(--cp-surface-soft); }
     .map-head .status { margin: 0; }
-    /* Maximize map — fills the viewport (toggled from the Together HUD) so the
-       live family map isn't cramped by the page chrome / details panel. */
+    /* Maximize map — fills the viewport (toggled from the on-map ⛶ control, or the
+       Together HUD) so the map isn't cramped by the page chrome / details panel. */
     body.map-max .map-card { position: fixed; inset: 0; z-index: 900; margin: 0; border: 0; border-radius: 0; }
     body.map-max .map-card .map-head,
     body.map-max .map-card .legend,
@@ -224,6 +224,10 @@
     body.map-max #leaflet { height: 100dvh; border-radius: 0; }
     body.map-max .hero,
     body.map-max footer.note { display: none; }
+    /* On-map maximize/restore button — inherits the Leaflet zoom-control look; the
+       glyph is centered and it highlights in the accent colour while maximized. */
+    .map-max-btn { font-size: 15px; line-height: 26px; text-align: center; color: #333; text-decoration: none; }
+    .map-max-btn[aria-pressed="true"] { background: var(--cp-accent); color: #fff; }
     .legend .rng { color: var(--cp-text); font-weight: 600; }
     .leaflet-container { font-family: inherit; }
     .pin {
@@ -858,7 +862,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v55";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v56";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -1274,7 +1278,7 @@
     // ============================================================
     //  Interactive Leaflet map
     // ============================================================
-    let map = null, cluster = null, routeLayer = null;
+    let map = null, cluster = null, routeLayer = null, mapMaxBtnEl = null;
     // Marker clustering handles the mobile perf problem at the whole-trip overview:
     // 156 individual box-shadowed DOM pins overlapping (see the fitted-bounds view)
     // meant a huge paint + layout every zoom/pan. markercluster collapses nearby pins
@@ -1324,7 +1328,43 @@
         disableClusteringAtZoom: 9,                    // zoomed into a region → every stop shows individually
         iconCreateFunction: clusterIcon,
       }).addTo(map);
+
+      // On-map maximize / restore control (top-right, beside the zoom buttons). It
+      // stays visible in full-screen (the control layer isn't hidden by map-max), so
+      // the same button toggles both ways. Kept in sync with the Together HUD's ⛶.
+      const MaxControl = L.Control.extend({
+        options: { position: "topright" },
+        onAdd() {
+          const a = L.DomUtil.create("a", "leaflet-bar leaflet-control map-max-btn");
+          a.href = "#"; a.innerHTML = "⛶"; a.title = "Maximize the map";
+          a.setAttribute("role", "button");
+          a.setAttribute("aria-label", "Maximize the map");
+          a.setAttribute("aria-pressed", "false");
+          L.DomEvent.on(a, "click", L.DomEvent.stop).on(a, "click", () => toggleMapMax());
+          mapMaxBtnEl = a;
+          return a;
+        },
+      });
+      map.addControl(new MaxControl());
     }
+    // Fill the viewport with the map (hides hero/header/legend/details via body.map-max)
+    // or restore. Single source of truth: keeps the on-map control AND the Together
+    // HUD button in sync, then re-measures the map so tiles fill the new size.
+    function setMapMax(on) {
+      const isOn = document.body.classList.toggle("map-max", on);
+      if (mapMaxBtnEl) {
+        mapMaxBtnEl.setAttribute("aria-pressed", String(isOn));
+        mapMaxBtnEl.title = isOn ? "Restore the map" : "Maximize the map";
+      }
+      const hudMax = document.getElementById("driveMax");
+      if (hudMax) {
+        hudMax.setAttribute("aria-pressed", String(isOn));
+        hudMax.title = isOn ? "Restore the map" : "Maximize the map (full screen)";
+      }
+      if (map) setTimeout(() => map.invalidateSize({ pan: false }), 240);
+      return isOn;
+    }
+    function toggleMapMax() { return setMapMax(!document.body.classList.contains("map-max")); }
     function pinIcon(color, emoji, seq) {
       const badge = seq ? `<div class="pin-seq">${seq}</div>` : "";
       return L.divIcon({
@@ -2301,7 +2341,7 @@
     document.getElementById("refreshBtn").addEventListener("click", refreshAll);
     document.getElementById("detClose").addEventListener("click", closeDrawer);
     document.getElementById("detBackdrop").addEventListener("click", closeDrawer);
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (document.body.classList.contains("map-max")) setMapMax(false); else closeDrawer(); } });
 
     // Reload the live trip from Google My Maps, then refresh the weather.
     async function refreshAll() {
@@ -3460,11 +3500,9 @@
       driveHeading = null; driveLastFix = null; driveDidCenter = false; // re-derive direction; recenter once this session
       hud.classList.add("open");
       hud.classList.remove("minimized"); // always open expanded
-      document.body.classList.remove("map-max"); // start in the normal layout
+      setMapMax(false); // start in the normal layout
       const minBtn = document.getElementById("driveMin");
       if (minBtn) { minBtn.setAttribute("aria-pressed", "false"); minBtn.textContent = "▾"; minBtn.title = "Minimize — maximize the map"; }
-      const maxBtn = document.getElementById("driveMax");
-      if (maxBtn) { maxBtn.setAttribute("aria-pressed", "false"); maxBtn.title = "Maximize the map (full screen)"; }
       btn.setAttribute("aria-pressed", "true");
       renderDrive();
       startTogether();
@@ -3482,10 +3520,7 @@
       const hud = document.getElementById("driveHud");
       const btn = document.getElementById("driveBtn");
       hud.classList.remove("open");
-      document.body.classList.remove("map-max"); // restore the normal layout on exit
-      const maxBtn = document.getElementById("driveMax");
-      if (maxBtn) { maxBtn.setAttribute("aria-pressed", "false"); maxBtn.title = "Maximize the map (full screen)"; }
-      if (map) setTimeout(() => map.invalidateSize({ pan: false }), 240);
+      setMapMax(false); // restore the normal layout on exit
       btn.setAttribute("aria-pressed", "false");
       if (driveWatchId != null && navigator.geolocation) navigator.geolocation.clearWatch(driveWatchId);
       driveWatchId = null;
@@ -3893,12 +3928,7 @@
         if (map) setTimeout(() => map.invalidateSize({ pan: false }), 220);
       });
       const driveMax = document.getElementById("driveMax");
-      if (driveMax) driveMax.addEventListener("click", () => {
-        const on = document.body.classList.toggle("map-max");
-        driveMax.setAttribute("aria-pressed", String(on));
-        driveMax.title = on ? "Restore the map" : "Maximize the map (full screen)";
-        if (map) setTimeout(() => map.invalidateSize({ pan: false }), 240);
-      });
+      if (driveMax) driveMax.addEventListener("click", () => toggleMapMax());
       const driveRefresh = document.getElementById("driveRefresh");
       if (driveRefresh) driveRefresh.addEventListener("click", () => {
         driveRefresh.classList.add("spin");
