@@ -858,7 +858,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v54";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v55";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -2013,11 +2013,28 @@
       routeLayer.clearLayers();
       const bounds = [];
       const markers = []; // collected then bulk-added — cluster.addLayers is far faster than one-by-one
+      // A shared overnight base is stored twice in the KML — as one day's LAST stop
+      // and the next day's FIRST stop, at identical coordinates (and some bases span
+      // several nights). Draw ONE pin per physical place: the first stop to claim a
+      // coordinate gets the marker; later stops at the same spot reuse it. Routes and
+      // per-day numbering are unaffected (every stop still feeds its day's polyline).
+      const seenAt = new Map(); // "lat,lon" → the marker already placed there
       TRIP.forEach((d, di) => {
         const color = DAY_COLORS[di % DAY_COLORS.length];
         const line = [];
         d.stops.forEach((s, si) => {
           s._seq = si + 1; // position in this day's driving order (1-based)
+          line.push([s.lat, s.lon]);   // the route always passes through every stop…
+          bounds.push([s.lat, s.lon]);
+          const key = s.lat.toFixed(5) + "," + s.lon.toFixed(5);
+          const shared = seenAt.get(key);
+          if (shared) {
+            // …but this exact spot already has a pin (the overnight handover). Reuse
+            // it so weather repaint keyed on _marker still targets the visible pin,
+            // and skip drawing a duplicate.
+            s._marker = shared; s._day = d; s._color = color;
+            return;
+          }
           const m = L.marker([s.lat, s.lon], { icon: pinIcon(color, TYPE_ICON[s.type] || "📍", si + 1) })
             .bindPopup(() => popupHtml(s, d, color)); // built lazily on open — avoids 100+ eager HTML builds per render
           // Created once and handed to the cluster group, which keeps only the
@@ -2028,8 +2045,7 @@
           s._color = color;
           m.on("click", () => showDetails(s, d, color));
           markers.push(m);
-          line.push([s.lat, s.lon]);
-          bounds.push([s.lat, s.lon]);
+          seenAt.set(key, m);
         });
         if (line.length > 1) L.polyline(line, { color, weight: 3, opacity: 0.55 }).addTo(routeLayer);
       });
