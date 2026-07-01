@@ -862,7 +862,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v56";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v57";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -1136,46 +1136,47 @@
           s._remHr = hr != null ? hr * frac : null;
           s._isStart = i === 0;
           s._isEnd = i === stops.length - 1;
-          s._contPrevDay = null; // cleared here; re-linked in the handover pass below
-          s._contNextDay = null;
+          s._departDays = null; // filled in the handover pass below
         });
       });
 
       // Overnight handover: the KML repeats each day's final stop as the NEXT day's
-      // first stop (you sleep there, then set off from there). Link the two copies so
-      // the UI can show that an end-of-day stop is also the start of the next day —
-      // and that a day's starting point is where you spent the previous night.
-      // Match on near-identical coords, or the same name within a short distance
-      // (Google My Maps sometimes nudges the two pins a little apart).
-      const sameSpot = (a, b) => {
-        if (!a || !b) return false;
-        const km = distKm(a.lat, a.lon, b.lat, b.lon);
-        if (km < 0.2) return true;
-        const nm = (x) => (x.name || "").trim().toLowerCase().replace(/\s+/g, " ");
-        return nm(a) && nm(a) === nm(b) && km < 3;
-      };
-      for (let d = 0; d < TRIP.length - 1; d++) {
-        const cur = TRIP[d].stops || [], nxt = TRIP[d + 1].stops || [];
-        if (!cur.length || !nxt.length) continue;
-        const endStop = cur[cur.length - 1], startStop = nxt[0];
-        if (sameSpot(endStop, startStop)) {
-          endStop._contNextDay = TRIP[d + 1]; // departs as next day's Stop 1
-          startStop._contPrevDay = TRIP[d];   // is the previous day's overnight (its last stop)
-        }
-      }
+      // first stop (you sleep there, then set off from there), and one base can host
+      // several days. We draw ONE pin per place (the first stop to claim a coordinate,
+      // usually a day's LAST stop), so that shared pin must also carry the full drive
+      // overview of EVERY day that STARTS from it — otherwise a day's total distance/
+      // time (which used to live on its now-deduped Stop 1) is lost and the figures
+      // appear to start at Stop 2.
+      const coordKey = (s) => s.lat.toFixed(5) + "," + s.lon.toFixed(5);
+      const startsByCoord = new Map(); // coord → [days that begin there]
+      TRIP.forEach((day) => {
+        const s0 = (day.stops || [])[0];
+        if (!s0) return;
+        const k = coordKey(s0);
+        if (!startsByCoord.has(k)) startsByCoord.set(k, []);
+        startsByCoord.get(k).push(day);
+      });
+      // On each stop, note which OTHER days depart from this exact spot.
+      TRIP.forEach((day) => {
+        (day.stops || []).forEach((s) => {
+          const deps = (startsByCoord.get(coordKey(s)) || []).filter((d) => d !== day);
+          s._departDays = deps.length ? deps : null;
+        });
+      });
     }
-    // One-line note describing a stop that hinges two days (overnight = end of one
-    // day AND start of the next), so the two identical-coordinate copies are clearly
-    // the same place. Labels come from KML → escaped.
+    // A stop can be the shared overnight base for one or more days (it's each of their
+    // Stop 1). Only one pin is drawn per place, so surface every day that DEPARTS from
+    // here with its full drive overview (distance + time) — this is what was missing on
+    // the deduped start pins. Labels come from KML → escaped.
     function handoverNote(stop) {
-      if (stop._contNextDay) {
-        return `🌅 You set off from here tomorrow — also ${chatEsc(stop._contNextDay.label)} · Stop 1`;
-      }
-      if (stop._contPrevDay) {
-        const p = stop._contPrevDay, n = (p.stops || []).length;
-        return `🛏️ Where you spent last night — also ${chatEsc(p.label)} · Stop ${n}`;
-      }
-      return null;
+      const deps = stop._departDays;
+      if (!deps || !deps.length) return null;
+      const parts = deps.map((nd) => {
+        const { km, hr } = dayTotals(nd);
+        const total = (km >= 0.1 || hr >= 0.02) ? remLabel(km, hr) : ""; // skip 0-drive rest days
+        return `${chatEsc(nd.label)}${total ? ` (${total})` : ""}`;
+      });
+      return `🌅 You set off from here — ${parts.join(", ")}`;
     }
 
     // ============================================================
