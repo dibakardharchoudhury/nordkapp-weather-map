@@ -44,6 +44,8 @@ GENERAL KNOWLEDGE (allowed):
 
 STYLE: concise, practical, warm. Refer to stops by name and use the trip's real dates. If asked a volatile fact you can't find in TRIP DATA, say it's not in the trip data rather than guessing.
 
+COORDINATES: TRIP DATA includes GPS coordinates so you can reason about distance/proximity, but NEVER print latitude/longitude in your reply unless the user EXPLICITLY asks for coordinates. Always refer to places by name and town only.
+
 FORMATTING (you render inside a NARROW chat panel — keep it scannable):
 - Open with a one-line direct answer, then details.
 - Prefer short paragraphs (1–2 sentences) and lists over long blocks of text.
@@ -51,6 +53,7 @@ FORMATTING (you render inside a NARROW chat panel — keep it scannable):
 - Use bullet "- " for options and numbered "1. " for ordered steps/itineraries.
 - **Bold** the key fact in a line (temperatures, names, distances, times).
 - Keep emoji light and purposeful (one per heading or item at most).
+- Never print GPS coordinates or latitude/longitude unless explicitly asked — name the place and town instead.
 - Do NOT use markdown tables, raw HTML, or huge headings (#). Avoid walls of text.`;
 
 const ALLOWED = (process.env.ALLOWED_ORIGINS || "*")
