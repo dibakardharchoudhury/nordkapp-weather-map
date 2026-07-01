@@ -17,6 +17,11 @@
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- Marker clustering: groups overlapping stop pins at overview zoom so only a
+       handful of DOM nodes paint (156 individual box-shadowed pins overlapping was
+       the remaining mobile jank); individual pins reappear once you zoom into a day. -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" crossorigin="" />
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
   <link rel="preconnect" href="https://api.met.no" crossorigin />
   <link rel="preconnect" href="https://a.tile.openstreetmap.org" crossorigin />
   <link rel="preconnect" href="https://b.tile.openstreetmap.org" crossorigin />
@@ -227,6 +232,31 @@
       box-shadow: 0 1px 4px rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center;
     }
     .pin span { transform: rotate(45deg); font-size: 13px; line-height: 1; }
+
+    /* Sequence badge — the stop's position in the day's driving order (1,2,3…),
+       so you can trace which point comes next along the route. Sits on a wrapper
+       (not the rotated teardrop) at the pin's top-right corner. */
+    .pin-wrap { position: relative; width: 28px; height: 40px; }
+    .pin-seq {
+      position: absolute; top: -5px; right: -7px; z-index: 2; box-sizing: border-box;
+      min-width: 16px; height: 16px; padding: 0 3px;
+      border-radius: 999px; background: #fff; color: #1f2937;
+      border: 1.5px solid var(--c, var(--cp-accent));
+      font-size: 10px; font-weight: 800; line-height: 13px; text-align: center;
+      box-shadow: 0 1px 3px rgba(0,0,0,.45);
+    }
+
+    /* Clustered-pins bubble (Leaflet.markercluster) — themed to match the app
+       instead of the plugin's default green/yellow. Shows the stop count. */
+    .cl-wrap { background: none; border: none; }
+    .cl {
+      border-radius: 50%; background: var(--cp-accent); color: #fff;
+      border: 2px solid #fff; box-shadow: 0 1px 5px rgba(0,0,0,.45);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 13px; line-height: 1;
+    }
+    .marker-cluster-anim .leaflet-marker-icon,
+    .marker-cluster-anim .leaflet-marker-shadow { transition: transform .18s ease-out; }
 
     /* "You are here!" current-location marker — pulsing accent dot + label pin */
     .me-wrap { position: relative; width: 18px; height: 18px; }
@@ -825,7 +855,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v50";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v52";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -1203,39 +1233,23 @@
     // ============================================================
     //  Interactive Leaflet map
     // ============================================================
-    let map = null, layer = null;
-    // Viewport culling — Leaflet keeps EVERY marker in the DOM forever, so 100+
-    // pins all reposition on every zoom/pan (the main mobile jank source). We keep
-    // only the pins inside the padded viewport attached to the map and detach the
-    // rest, so the per-frame/per-zoom work scales with what's on screen, not the
-    // whole trip. Markers, popups and click handlers are created once and reused;
-    // detaching never destroys them, so weather/POI updates stay intact.
-    let mapMarkers = [];           // [{ m, lat, lon, on, queued }] — every stop pin
-    let _addQueue = [], _addScheduled = false;
-    function cullMarkers() {
-      if (!map || !mapMarkers.length) return;
-      const b = map.getBounds().pad(0.25); // small halo so edge pins are ready before they scroll in
-      for (const o of mapMarkers) {
-        const inside = b.contains([o.lat, o.lon]);
-        if (inside) { if (!o.on && !o.queued) { o.queued = true; _addQueue.push(o); } }      // attach lazily (chunked below)
-        else if (o.on && !o.m.isPopupOpen()) { layer.removeLayer(o.m); o.on = false; }        // detach is cheap; keep an open popup attached
-      }
-      flushAdds();
-    }
-    // Attach revealed pins a few per frame so a big reveal (e.g. zooming back out to
-    // the whole-trip overview) never lands as one long task — keeps the gesture smooth.
-    function flushAdds() {
-      if (_addScheduled || !_addQueue.length) return;
-      _addScheduled = true;
-      requestAnimationFrame(() => {
-        _addScheduled = false;
-        const b = map.getBounds().pad(0.25);
-        let n = 0;
-        while (_addQueue.length && n < 24) {
-          const o = _addQueue.shift(); o.queued = false;
-          if (!o.on && b.contains([o.lat, o.lon])) { layer.addLayer(o.m); o.on = true; n++; } // skip ones panned back off-screen
-        }
-        if (_addQueue.length) flushAdds();
+    let map = null, cluster = null, routeLayer = null;
+    // Marker clustering handles the mobile perf problem at the whole-trip overview:
+    // 156 individual box-shadowed DOM pins overlapping (see the fitted-bounds view)
+    // meant a huge paint + layout every zoom/pan. markercluster collapses nearby pins
+    // into a single count bubble, so only a handful of nodes paint when zoomed out,
+    // and it culls off-screen markers itself (removeOutsideVisibleBounds). Once you
+    // zoom into a region (>= disableClusteringAtZoom) every stop shows individually.
+    // Markers/popups/click-handlers are still created once and kept on s._marker, so
+    // weather/POI refreshes are unaffected. Day-route polylines live on a separate
+    // layer (routeLayer) so they're always drawn and never fed into the cluster group.
+    function clusterIcon(c) {
+      const n = c.getChildCount();
+      const size = n < 10 ? 34 : n < 30 ? 40 : 46;
+      return L.divIcon({
+        html: `<div class="cl" style="width:${size}px;height:${size}px"><span>${n}</span></div>`,
+        className: "cl-wrap",
+        iconSize: [size, size],
       });
     }
     function initMap() {
@@ -1258,13 +1272,23 @@
         keepBuffer: 2,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       }).addTo(map);
-      layer = L.layerGroup().addTo(map);
-      map.on("moveend zoomend", cullMarkers); // re-evaluate which pins are on screen after each gesture
+      routeLayer = L.layerGroup().addTo(map);         // day-route polylines (always drawn)
+      cluster = L.markerClusterGroup({
+        chunkedLoading: true,                          // add markers in rAF chunks — a big reveal never lands as one long task
+        removeOutsideVisibleBounds: true,              // built-in viewport culling: only in-view markers stay in the DOM
+        showCoverageOnHover: false,                    // skip the convex-hull polygon (paint + clutter)
+        animate: !L.Browser.mobile,                    // no cluster spawn/merge animation on phones = snappier
+        spiderfyOnMaxZoom: true,
+        maxClusterRadius: 50,                          // px: how aggressively to group overlapping pins
+        disableClusteringAtZoom: 9,                    // zoomed into a region → every stop shows individually
+        iconCreateFunction: clusterIcon,
+      }).addTo(map);
     }
-    function pinIcon(color, emoji) {
+    function pinIcon(color, emoji, seq) {
+      const badge = seq ? `<div class="pin-seq">${seq}</div>` : "";
       return L.divIcon({
         className: "",
-        html: `<div class="pin" style="--c:${color}"><span>${emoji}</span></div>`,
+        html: `<div class="pin-wrap" style="--c:${color}"><div class="pin"><span>${emoji}</span></div>${badge}</div>`,
         iconSize: [28, 40], iconAnchor: [14, 40], popupAnchor: [0, -36]
       });
     }
@@ -1319,8 +1343,16 @@
       const query = name ? `${name} ${coords}` : coords;
       return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
     }
+    // A stop's 1-based position in its day's driving order, plus the day's stop
+    // count — so popups/details can show "Stop 3 of 12" and you know what's next.
+    function stopSeq(stop, day) {
+      const arr = (day && day.stops) || [];
+      const i = arr.indexOf(stop);
+      return { seq: i < 0 ? 0 : i + 1, total: arr.length };
+    }
     function popupHtml(stop, day, color) {
       const w = stop._wx;
+      const { seq, total } = stopSeq(stop, day);
       const loc = addrText(stop);
       const locHtml = loc ? `<div class="pop-loc">${chatEsc(loc)}</div>` : "";
       const gmLink = gmapsLink(stop);
@@ -1337,7 +1369,7 @@
             ? `<div class="pop-sub">Weather unavailable</div>`
             : `<div class="pop-sub">Loading weather…</div>`;
       return `<div class="pop-name">${TYPE_ICON[stop.type] || "📍"} ${chatEsc(stop.name)}</div>
-              <div class="pop-day" style="color:${color}">${day.label} · ${ordinalDate(day.date)} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${driveHtml}${locHtml}${wx}
+              <div class="pop-day" style="color:${color}">${day.label}${seq ? ` · Stop ${seq}/${total}` : ""} · ${ordinalDate(day.date)} · ${TYPE_LABEL[stop.type] || "Stop"}</div>${driveHtml}${locHtml}${wx}
               <div class="pop-sub"><a href="${gmLink}" target="_blank" rel="noopener">Open in Google Maps ↗</a></div>`;
     }
 
@@ -1347,6 +1379,7 @@
       const w = stop._wx;
       const g = stop._g;
       const done = stop._gState === "done";
+      const { seq, total } = stopSeq(stop, day);
       const loc = addrText(stop);
       const locLine = loc ? `<div class="det-loc">${chatEsc(loc)}</div>` : "";
       const gmLink = gmapsLink(stop);
@@ -1379,7 +1412,7 @@
                 <span class="det-icon">${TYPE_ICON[stop.type] || "📍"}</span>
                 <div>
                   <div class="det-name">${chatEsc(stop.name)}</div>
-                  <div class="det-sub" style="color:${color}">${day.label} · ${ordinalDate(day.date)}</div>
+                  <div class="det-sub" style="color:${color}">${day.label}${seq ? ` · Stop ${seq} of ${total}` : ""} · ${ordinalDate(day.date)}</div>
                   ${drive ? `<div class="det-day-meta">${drive}</div>` : ""}
                   ${locLine}
                   <div class="det-coords"><a href="${gmLink}" target="_blank" rel="noopener">Open in Google Maps ↗</a></div>
@@ -1931,30 +1964,32 @@
     function renderMap() {
       if (!map) return;
       map.invalidateSize();
-      layer.clearLayers();
-      mapMarkers = [];
-      _addQueue = []; // drop any pending attaches from a previous render
+      cluster.clearLayers();
+      routeLayer.clearLayers();
       const bounds = [];
+      const markers = []; // collected then bulk-added — cluster.addLayers is far faster than one-by-one
       TRIP.forEach((d, di) => {
         const color = DAY_COLORS[di % DAY_COLORS.length];
         const line = [];
-        d.stops.forEach((s) => {
-          const m = L.marker([s.lat, s.lon], { icon: pinIcon(color, TYPE_ICON[s.type] || "📍") })
+        d.stops.forEach((s, si) => {
+          s._seq = si + 1; // position in this day's driving order (1-based)
+          const m = L.marker([s.lat, s.lon], { icon: pinIcon(color, TYPE_ICON[s.type] || "📍", si + 1) })
             .bindPopup(() => popupHtml(s, d, color)); // built lazily on open — avoids 100+ eager HTML builds per render
-          // Created once; cullMarkers() attaches only the on-screen pins. Polylines
-          // stay on the canvas (cheap), so day routes are always fully drawn.
-          mapMarkers.push({ m, lat: s.lat, lon: s.lon, on: false });
+          // Created once and handed to the cluster group, which keeps only the
+          // on-screen markers in the DOM and collapses the rest into count bubbles.
+          // Polylines stay on the canvas (cheap), so day routes are always drawn.
           s._marker = m;
           s._day = d;
           s._color = color;
           m.on("click", () => showDetails(s, d, color));
+          markers.push(m);
           line.push([s.lat, s.lon]);
           bounds.push([s.lat, s.lon]);
         });
-        if (line.length > 1) L.polyline(line, { color, weight: 3, opacity: 0.55 }).addTo(layer);
+        if (line.length > 1) L.polyline(line, { color, weight: 3, opacity: 0.55 }).addTo(routeLayer);
       });
+      cluster.addLayers(markers); // bulk add → chunked/clustered in one pass
       if (bounds.length) map.fitBounds(bounds, { padding: [40, 40] });
-      cullMarkers(); // attach the pins visible in the initial fitted view
 
       // Legend — one entry per day with its dynamic date and (once loaded) temp range
       document.getElementById("legend").innerHTML = TRIP

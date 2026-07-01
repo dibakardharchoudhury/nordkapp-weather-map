@@ -16,7 +16,7 @@
 // new build ships — the classic stale-PWA discrepancy between two devices. Serving
 // the document network-first means an online launch always gets the current page,
 // while an offline launch still falls back to the cached shell.
-const VERSION = "v50";
+const VERSION = "v52";
 const SHELL_CACHE = `nordkapp-shell-${VERSION}`;
 const TILE_CACHE = `nordkapp-tiles-${VERSION}`;
 const DATA_CACHE = `nordkapp-data-${VERSION}`;
@@ -34,6 +34,8 @@ const SHELL = [
   "./icon-512-maskable.png",
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js",
+  "https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css",
+  "https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js",
 ];
 
 self.addEventListener("install", (event) => {
