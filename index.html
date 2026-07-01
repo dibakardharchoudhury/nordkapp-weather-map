@@ -855,7 +855,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v52";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v53";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -1991,10 +1991,12 @@
       cluster.addLayers(markers); // bulk add → chunked/clustered in one pass
       if (bounds.length) map.fitBounds(bounds, { padding: [40, 40] });
 
-      // Legend — one entry per day with its dynamic date and (once loaded) temp range
+      // Legend — one entry per day with its dynamic date and (once loaded) temp range.
+      // d.label is a KML folder name (untrusted) → escape it for both the title
+      // attribute (quote-safe) and the element text, like every other OSM/KML string.
       document.getElementById("legend").innerHTML = TRIP
         .filter((d) => d.stops.length)
-        .map((d) => `<span class="lg" data-di="${d.day - 1}" role="button" tabindex="0" title="AI briefing for ${d.label}"><span class="sw" style="background:${DAY_COLORS[(d.day - 1) % DAY_COLORS.length]}"></span><b>${d.label}</b> · ${shortDate(d.date)}</span>`)
+        .map((d) => `<span class="lg" data-di="${d.day - 1}" role="button" tabindex="0" title="AI briefing for ${chatEsc(d.label).replace(/"/g, "&quot;")}"><span class="sw" style="background:${DAY_COLORS[(d.day - 1) % DAY_COLORS.length]}"></span><b>${chatEsc(d.label)}</b> · ${shortDate(d.date)}</span>`)
         .join("");
     }
 
