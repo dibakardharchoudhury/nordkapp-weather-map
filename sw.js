@@ -16,7 +16,7 @@
 // new build ships — the classic stale-PWA discrepancy between two devices. Serving
 // the document network-first means an online launch always gets the current page,
 // while an offline launch still falls back to the cached shell.
-const VERSION = "v61";
+const VERSION = "v62";
 const SHELL_CACHE = `nordkapp-shell-${VERSION}`;
 const TILE_CACHE = `nordkapp-tiles-${VERSION}`;
 const DATA_CACHE = `nordkapp-data-${VERSION}`;
@@ -81,6 +81,40 @@ self.addEventListener("fetch", (event) => {
 // Let the page apply a freshly-installed worker without waiting for all tabs to close.
 self.addEventListener("message", (event) => {
   if (event.data === "skipWaiting") self.skipWaiting();
+});
+
+// === Web Push — critical trip alerts (weather, "hurry up", store/fuel closing) ===
+// The proxy sends a JSON payload; we render it as a system notification so it
+// reaches the family even when the app is closed / the phone is locked. Payload:
+//   { title, body, tag, url }  (all optional except title/body)
+self.addEventListener("push", (event) => {
+  let d = {};
+  try { d = event.data ? event.data.json() : {}; } catch { d = { title: "Nordkapp trip", body: event.data && event.data.text() }; }
+  const title = d.title || "Nordkapp Roadtrip";
+  const opts = {
+    body: d.body || "",
+    tag: d.tag || undefined,        // same tag replaces an earlier alert instead of stacking
+    renotify: !!d.tag,
+    data: { url: d.url || "./index.html" },
+    icon: "./icon-192.png",
+    badge: "./icon-192.png",
+    vibrate: [120, 60, 120],
+  };
+  event.waitUntil(self.registration.showNotification(title, opts));
+});
+
+// Tapping a notification focuses an existing tab (or opens one) at the target URL.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || "./index.html";
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const c of all) {
+      // Reuse any already-open app window.
+      if ("focus" in c) { try { await c.focus(); return; } catch { /* fall through */ } }
+    }
+    if (self.clients.openWindow) await self.clients.openWindow(target);
+  })());
 });
 
 // The page: fetch fresh from the network, refresh the cached shell copy, and only

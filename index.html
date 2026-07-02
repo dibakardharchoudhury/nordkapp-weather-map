@@ -818,6 +818,7 @@
       <div class="dh-title"><span class="dh-live"></span> Together mode</div>
       <div class="dh-tools">
         <button class="dh-tool" id="driveSpeak" type="button" aria-pressed="false" title="Read stops & family locations aloud" hidden>🔊</button>
+        <button class="dh-tool" id="driveAlerts" type="button" aria-pressed="false" title="Trip alerts — weather, hurry-up & viewer notifications" hidden>🔔</button>
         <button class="dh-tool" id="driveRefresh" type="button" title="Refresh my GPS location now">⟳</button>
         <button class="dh-tool" id="driveMax" type="button" aria-pressed="false" title="Maximize the map (full screen)">⛶</button>
         <button class="dh-tool" id="driveMin" type="button" aria-pressed="false" title="Minimize — maximize the map">▾</button>
@@ -877,7 +878,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v61";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v62";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -3648,6 +3649,8 @@
     }
     // Show a small in-app toast in the corner. Auto-dismisses; stacks are trimmed so a
     // burst never buries the map. Used to announce when someone starts viewing the trip.
+    // Returns the toast element so the caller can update its text later (e.g. once an
+    // async reverse-geocode resolves the viewer's place name).
     function showToast(html, ms) {
       let host = document.getElementById("toastHost");
       if (!host) {
@@ -3664,11 +3667,21 @@
       requestAnimationFrame(() => t.classList.add("in"));
       const kill = () => { t.classList.remove("in"); setTimeout(() => t.remove(), 300); };
       t.addEventListener("click", kill);
-      setTimeout(kill, ms || 8000);
+      setTimeout(kill, ms || 9000);
+      return t;
     }
+    // Compose the "someone is viewing" line for a viewer member, naming their place.
+    const viewerToastHtml = (mb, place) => {
+      const who = chatEsc(mb.name || "Someone");
+      const loc = place ? ` from <b>${chatEsc(place)}</b>`
+        : (Number.isFinite(mb.lat) && Number.isFinite(mb.lng) ? ` near <b>${mb.lat.toFixed(3)}, ${mb.lng.toFixed(3)}</b>` : "");
+      return `👁️ <b>${who}</b> joined as a viewer${loc} — they can now see the cars' positions.`;
+    };
     // Announce (once) when a NEW viewer starts watching, including where they are.
     // Fires on cars AND on other viewers — anyone in the room is told "someone is
-    // watching" with that viewer's reverse-geocoded place (coords as a fallback).
+    // watching" with that viewer's reverse-geocoded place. The place lookup is async,
+    // so the toast shows immediately (coords fallback) and upgrades to the real place
+    // name the moment the reverse-geocode resolves, over the next few seconds.
     function notifyNewViewers(members) {
       const liveViewerIds = new Set();
       (members || []).forEach((mb) => {
@@ -3676,12 +3689,20 @@
         liveViewerIds.add(mb.id);
         if (knownViewerIds.has(mb.id)) return;      // already announced this viewer
         knownViewerIds.add(mb.id);
-        let where = "";
-        if (Number.isFinite(mb.lat) && Number.isFinite(mb.lng)) {
-          const place = famPlaceFor(mb.lat, mb.lng);
-          where = place ? ` from <b>${chatEsc(place)}</b>` : ` near <b>${mb.lat.toFixed(3)}, ${mb.lng.toFixed(3)}</b>`;
+        const has = Number.isFinite(mb.lat) && Number.isFinite(mb.lng);
+        const place0 = has ? famPlaceFor(mb.lat, mb.lng) : null;   // may be undefined while it resolves
+        const toast = showToast(viewerToastHtml(mb, place0));
+        // If we didn't have the place name yet, poll a few times and swap it in.
+        if (has && !place0) {
+          let tries = 0;
+          const upgrade = () => {
+            if (!toast.isConnected) return;                       // toast already dismissed
+            const place = famPlaceFor(mb.lat, mb.lng);
+            if (place) { toast.innerHTML = viewerToastHtml(mb, place); return; }
+            if (++tries < 5) setTimeout(upgrade, 1500);
+          };
+          setTimeout(upgrade, 1200);
         }
-        showToast(`👁️ <b>${chatEsc(mb.name || "Someone")}</b> is now viewing the trip${where}.`);
       });
       // Forget viewers who have left, so if they return later we announce them again.
       knownViewerIds.forEach((id) => { if (!liveViewerIds.has(id)) knownViewerIds.delete(id); });
@@ -3747,7 +3768,15 @@
         // simply fade and drop after the server's grace window. Either way we rejoin automatically
         // the instant a fresh fix returns.
         const wantShare = (!!togetherName || viewerMode) && document.visibilityState !== "hidden";
-        if (wantShare && !userLoc) acquireFix(false); // no fix yet — go get one so we actually register
+        // A stationary device with no GPS chip (typically a desktop/laptop on Wi-Fi/IP
+        // geolocation) gets ONE watchPosition fix and then silence — the browser only emits
+        // a new position when you MOVE. That silence lets userFixAt age past the stale window
+        // and wrongly flags us "GPS paused" (and drops us to "signal lost" for the family)
+        // even though the screen is on and nothing is wrong. So while sharing, proactively
+        // re-acquire whenever our last fix is getting old: a one-shot getCurrentPosition with
+        // a small maximumAge returns the last network fix instantly and refreshes the stamp.
+        const fixAgeMs = userLoc ? (Date.now() - userFixAt) : Infinity;
+        if (wantShare && (!userLoc || fixAgeMs > 10000)) acquireFix(false);
         const fixFresh = !!userLoc && (Date.now() - userFixAt) <= TOGETHER_STALE_MS;
         const broadcasting = wantShare && fixFresh;
         // Three request modes:
@@ -3808,6 +3837,7 @@
       acquireFix(true);   // grab a fix immediately so the family sees us right away
       pushTogether();
       try { if (window.naTrack) window.naTrack("together_join"); } catch {}
+      updatePushIdentity(); // route alerts to this car's devices
     }
     // Stop broadcasting and return to the picker, keeping this device's bound identity
     // so you can rejoin as yourself or reset the device. The heartbeat keeps peeking,
@@ -3843,6 +3873,7 @@
       acquireFix(true);                  // share a fix at once so the family sees who's watching
       pushTogether();
       try { if (window.naTrack) window.naTrack("viewer_join"); } catch {}
+      updatePushIdentity(); // register this device as a viewer for alert routing
     }
     // Stop viewing and return to the picker (drops our viewer pin from the room).
     function leaveViewer() {
@@ -4121,6 +4152,90 @@
       if (pill) pill.hidden = navigator.onLine;
     }
 
+    // ============================================================
+    //  Web Push — critical trip alerts (weather, "hurry up", viewer joined).
+    //  Opt-in via the 🔔 button in the Together HUD. We register the browser's push
+    //  subscription with the proxy (keyless VAPID); the proxy sends notifications
+    //  that the service worker renders even when the app is closed / phone locked.
+    // ============================================================
+    const PUSH_BASE = "https://nordkapp-ai-proxy.azurewebsites.net/api/push";
+    const VAPID_PUBLIC_FALLBACK = "BHuMNqIy871eSOa9dXUPPOVEm1lOYRAPg2l-PdiHBbWkvr0J7_GMJXCJTS1PeXOXGZx7iBs0qwVkgofg1pd6QdQ";
+    let vapidKey = "";
+    const pushSupported = () => ("serviceWorker" in navigator) && ("PushManager" in window) && ("Notification" in window);
+    function urlBase64ToUint8Array(b64) {
+      const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+      const s = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+      const raw = atob(s);
+      const arr = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+      return arr;
+    }
+    async function getPushKey() {
+      if (vapidKey) return vapidKey;
+      try { const r = await fetch(PUSH_BASE + "/config"); const j = await r.json(); if (j && j.publicKey) vapidKey = j.publicKey; } catch { /* offline */ }
+      return vapidKey || VAPID_PUBLIC_FALLBACK;
+    }
+    // Who this device currently is, so the proxy can route alerts (a car's hurry-up
+    // nudge goes to its own devices; the viewer-joined alert goes to the cars).
+    function pushIdentity() {
+      return { name: viewerMode ? "Viewer" : (togetherName || myIdentity || ""), role: viewerMode ? "viewer" : "car", room: TOGETHER_ROOM };
+    }
+    function renderAlertsBtn() {
+      const b = document.getElementById("driveAlerts");
+      if (!b) return;
+      const on = (localStorage.getItem("pushOn") === "1") && ("Notification" in window) && Notification.permission === "granted";
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      b.title = on ? "Trip alerts ON — tap to turn off" : "Trip alerts — weather, hurry-up & viewer notifications";
+    }
+    async function enablePush() {
+      if (!pushSupported()) { alert("This browser can't show push notifications. On iPhone, add the app to your Home Screen first."); return; }
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { localStorage.removeItem("pushOn"); renderAlertsBtn(); return; }
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const key = await getPushKey();
+        const sub = (await reg.pushManager.getSubscription()) ||
+          (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(key) }));
+        await fetch(PUSH_BASE + "/subscribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sub, ...pushIdentity() }) });
+        localStorage.setItem("pushOn", "1");
+        renderAlertsBtn();
+      } catch (e) { console.warn("push subscribe failed", e); localStorage.removeItem("pushOn"); renderAlertsBtn(); }
+    }
+    async function disablePush() {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          try { await fetch(PUSH_BASE + "/unsubscribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ endpoint: sub.endpoint }) }); } catch { /* ignore */ }
+          try { await sub.unsubscribe(); } catch { /* ignore */ }
+        }
+      } catch { /* ignore */ }
+      localStorage.removeItem("pushOn");
+      renderAlertsBtn();
+    }
+    function togglePush() { (localStorage.getItem("pushOn") === "1") ? disablePush() : enablePush(); }
+    // Keep the proxy's copy of our identity current (called when we pick a car / join
+    // as viewer / leave) so alerts are routed to the right person — without prompting.
+    async function updatePushIdentity() {
+      if (localStorage.getItem("pushOn") !== "1" || !pushSupported() || Notification.permission !== "granted") return;
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) await fetch(PUSH_BASE + "/subscribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sub, ...pushIdentity() }) });
+      } catch { /* ignore */ }
+    }
+    function initPush() {
+      const b = document.getElementById("driveAlerts");
+      if (!b) return;
+      if (!pushSupported()) { b.hidden = true; return; }
+      b.hidden = false;
+      b.addEventListener("click", togglePush);
+      renderAlertsBtn();
+      // If already opted in, re-affirm the subscription on load (also refreshes identity).
+      // Notification.permission is already "granted" here, so this never prompts.
+      if (localStorage.getItem("pushOn") === "1" && Notification.permission === "granted") enablePush();
+    }
+
     function initExtras() {
       const driveBtn = document.getElementById("driveBtn");
       if (driveBtn) driveBtn.addEventListener("click", toggleDrive);
@@ -4176,6 +4291,7 @@
     initBriefing();
     initVersion();
     initAnalytics();
+    initPush();
     boot();
   </script>
 </body>

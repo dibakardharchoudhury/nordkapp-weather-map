@@ -13,6 +13,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { DefaultAzureCredential } from "@azure/identity";
 import { getTripContext } from "./context.js";
 import { recordAnalytics, analyticsSummary, ensureAnalyticsLoaded } from "./analytics.js";
+import { pushEnabled, publicKey as vapidPublicKey, saveSubscription, removeSubscription, notifyRoom, notifyEndpoint, roomHasSubs } from "./push.js";
 
 const credential = new DefaultAzureCredential();
 const SCOPE = "https://cognitiveservices.azure.com/.default";
@@ -165,6 +166,7 @@ function handleTogether(req, res) {
   const room = cleanRoom(b.room);
   const id = cleanMemberId(b.id);
   if (!room || !id) return res.status(400).json({ error: "room and id required" });
+  let newViewer = null; // set when a brand-new viewer registers, so we can push the family after responding
 
   // Explicit leave — when a member exits Together mode (or closes the app) we remove
   // them at once so the rest of the family sees them drop offline immediately,
@@ -199,6 +201,11 @@ function handleTogether(req, res) {
     // the family can see who's watching and from where, but they're capped SEPARATELY
     // from the cars so a crowd of viewers can never crowd the fleet out of the room.
     const role = b.role === "viewer" ? "viewer" : "car";
+    // A NEW viewer (first registration under this id) triggers a push to the cars so
+    // the family is told someone started watching, even with the app closed.
+    if (role === "viewer" && !m.has(id) && pushEnabled) {
+      newViewer = { name: cleanMemberName(b.name) || "Viewer", lat: b.lat, lng: b.lng };
+    }
     if (!m.has(id) && role === "viewer") {
       // Enforce the viewer cap the same forgiving way as the room cap: never reject a
       // (re)join — instead, when a NEW viewer arrives and the room is already at the
@@ -239,8 +246,132 @@ function handleTogether(req, res) {
     members.push({ id: mid, name: v.name, lat: v.lat, lng: v.lng, acc: v.acc ?? null, role: v.role || "car", ts: v.ts });
   }
   res.json({ ok: true, members, serverTime: Date.now() });
+  // Fire-and-forget: tell the fleet (via Web Push) that a new viewer is watching,
+  // reverse-geocoding their coarse position to a readable place. Guarded by pushEnabled
+  // so the unit tests (no VAPID env) never hit the network here.
+  if (newViewer && pushEnabled) notifyViewerJoined(room, newViewer);
 }
 app.post("/api/together", handleTogether);
+
+// Best-effort reverse geocode to a short "Town, Region" label (server-side; App
+// Service egress can reach Nominatim). Returns null on any failure.
+async function reverseGeocodeShort(lat, lng) {
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 4000);
+    let d;
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&lat=${lat}&lon=${lng}`,
+        { headers: { "User-Agent": "NordkappRoadtrip/1.0 github.com/dibakardharchoudhury/nordkapp-weather-map" }, signal: ctl.signal });
+      if (!r.ok) return null;
+      d = await r.json();
+    } finally { clearTimeout(t); }
+    const a = (d && d.address) || {};
+    const town = a.city || a.town || a.village || a.municipality || a.hamlet || a.suburb;
+    const region = a.county || a.state;
+    return [town, region].filter(Boolean).slice(0, 2).join(", ") || (d && d.name) || null;
+  } catch { return null; }
+}
+
+// Push "a viewer just joined" to the cars (not to viewers).
+async function notifyViewerJoined(room, viewer) {
+  try {
+    const place = (Number.isFinite(viewer.lat) && Number.isFinite(viewer.lng))
+      ? await reverseGeocodeShort(viewer.lat, viewer.lng) : null;
+    const loc = place ? ` from ${place}` : "";
+    await notifyRoom(room, {
+      title: "\uD83D\uDC41\uFE0F New viewer watching",
+      body: `${viewer.name} just joined as a viewer${loc} and can see the cars' live positions.`,
+      tag: "viewer-joined",
+      url: "./index.html",
+    }, { role: "car" });
+  } catch (e) { console.error("[push] viewer-join notify:", e?.message || e); }
+}
+
+// === Web Push — critical trip alerts (weather, "hurry up", viewer joined) ===
+// Keyless (VAPID). Subscribe/unsubscribe are open (a browser registers its own push
+// endpoint); the global rate limiter covers them. /config lets the client fetch the
+// public key so it's never hard-coded/rotation-locked.
+app.get("/api/push/config", (req, res) => res.json({ enabled: pushEnabled, publicKey: vapidPublicKey || "" }));
+app.post("/api/push/subscribe", (req, res) => {
+  const b = req.body || {};
+  res.json(saveSubscription({ sub: b.sub, name: b.name, role: b.role, room: b.room }));
+});
+app.post("/api/push/unsubscribe", (req, res) => {
+  const ep = (req.body && req.body.endpoint) || "";
+  if (!ep) return res.status(400).json({ error: "endpoint required" });
+  res.json(removeSubscription(ep));
+});
+// Fire a test alert so a user can confirm notifications work end-to-end.
+app.post("/api/push/test", async (req, res) => {
+  const b = req.body || {};
+  try {
+    let out;
+    if (b.endpoint) out = await notifyEndpoint(b.endpoint, { title: "🔔 Trip alerts are on", body: "Test alert — you'll get weather, hurry-up and viewer notifications here.", tag: "test" });
+    else if (b.room) out = await notifyRoom(b.room, { title: "🔔 Trip alerts test", body: "Test alert for the family.", tag: "test" }, { name: b.name });
+    else return res.status(400).json({ error: "endpoint or room required" });
+    res.json({ ok: true, ...out });
+  } catch (e) { res.status(500).json({ error: e?.message || "send failed" }); }
+});
+
+// === Pace engine — a gentle "you've been parked a while" nudge to curb over-long
+// stops. Reads the live Together relay only (no fragile schedule math): if a car
+// that's actively sharing hasn't moved for a while during the day, we push its own
+// devices once (with a cooldown). Location-based, so it only fires while a car is
+// sharing; it never nags (one nudge per car per hour).
+const DWELL_NUDGE_MS = 40 * 60 * 1000;    // parked this long → nudge
+const DWELL_COOLDOWN_MS = 60 * 60 * 1000; // at most one nudge per car per hour
+const DWELL_MOVE_KM = 0.15;               // moved more than this → reset the dwell clock
+const dwellState = new Map();             // "room|id" → { lat, lng, since, notifiedAt }
+
+function distKm(aLat, aLon, bLat, bLon) {
+  const R = 6371, toR = (d) => (d * Math.PI) / 180;
+  const dLat = toR(bLat - aLat), dLon = toR(bLon - aLon);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toR(aLat)) * Math.cos(toR(bLat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+async function evaluatePace() {
+  if (!pushEnabled) return;
+  const now = Date.now();
+  const hour = Number(new Date().toLocaleString("en-US", { timeZone: "Europe/Oslo", hour: "2-digit", hour12: false }));
+  const daytime = hour >= 8 && hour <= 22; // don't nudge in the middle of the night
+  for (const [room, members] of togetherRooms) {
+    if (!roomHasSubs(room)) continue;
+    for (const [id, v] of members) {
+      if (v.role === "viewer") continue;                       // only nudge the cars
+      if (!Number.isFinite(v.lat) || !Number.isFinite(v.lng)) continue;
+      if (now - (v.seen ?? v.ts) > 3 * 60 * 1000) continue;    // only cars currently sharing
+      const key = room + "|" + id;
+      const st = dwellState.get(key);
+      if (!st) { dwellState.set(key, { lat: v.lat, lng: v.lng, since: now, notifiedAt: 0 }); continue; }
+      if (distKm(st.lat, st.lng, v.lat, v.lng) > DWELL_MOVE_KM) { st.lat = v.lat; st.lng = v.lng; st.since = now; continue; }
+      const parkedMs = now - st.since;
+      if (daytime && parkedMs >= DWELL_NUDGE_MS && (now - st.notifiedAt) > DWELL_COOLDOWN_MS) {
+        st.notifiedAt = now;
+        const mins = Math.round(parkedMs / 60000);
+        notifyRoom(room, {
+          title: "⏱️ Long stop?",
+          body: `You've been parked about ${mins} min. If it's getting late, it may be time to head to the next stop.`,
+          tag: "dwell-" + id,
+          url: "./index.html",
+        }, { name: v.name, role: "car" }).catch(() => {});
+      }
+    }
+  }
+  // Forget dwell state for members who have left the room.
+  for (const key of [...dwellState.keys()]) {
+    const sep = key.indexOf("|");
+    const rm = togetherRooms.get(key.slice(0, sep));
+    if (!rm || !rm.has(key.slice(sep + 1))) dwellState.delete(key);
+  }
+}
+// Run the evaluator on a timer, but never in the test harness (PORT=0) and never
+// when push is off. unref() so it can't keep the process alive on its own.
+if (pushEnabled && process.env.PORT !== "0") {
+  const paceTimer = setInterval(() => { evaluatePace().catch(() => {}); }, 60_000);
+  if (paceTimer.unref) paceTimer.unref();
+}
 
 // === Traffic analytics ===
 // Ingest is open (any visitor's browser beacons here) and must NEVER fail the page;
