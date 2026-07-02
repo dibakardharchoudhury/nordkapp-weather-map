@@ -769,6 +769,23 @@
     .toast { pointer-events: auto; background: var(--cp-surface, #fff); color: var(--cp-text, #111); border: 1px solid var(--cp-border); border-left: 4px solid #7a5cff; border-radius: 11px; padding: 10px 14px; font-size: .82rem; line-height: 1.35; box-shadow: 0 6px 22px rgba(0,0,0,.28); opacity: 0; transform: translateY(10px); transition: opacity .25s ease, transform .25s ease; cursor: pointer; }
     .toast.in { opacity: 1; transform: translateY(0); }
     .toast b { color: var(--cp-text, #111); }
+    /* "How to enable alerts" help card */
+    .alerts-back { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 4000; display: none; align-items: center; justify-content: center; padding: 16px; }
+    .alerts-back.open { display: flex; }
+    .alerts-card { background: var(--cp-surface, #fff); color: var(--cp-text, #111); border: 1px solid var(--cp-border); border-radius: 16px; max-width: 430px; width: 100%; padding: 18px; box-shadow: 0 14px 44px rgba(0,0,0,.4); max-height: 86vh; overflow-y: auto; }
+    .alerts-card h3 { margin: 0 0 8px; font-size: 1.08rem; }
+    .alerts-card p { margin: 7px 0; font-size: .85rem; color: var(--cp-text-soft); line-height: 1.4; }
+    .alerts-card p b, .alerts-card li b { color: var(--cp-text); }
+    .alerts-steps { background: var(--cp-surface-2, rgba(127,127,127,.09)); border-radius: 11px; padding: 11px 14px; margin: 11px 0; font-size: .84rem; }
+    .alerts-steps ol { margin: 7px 0 2px; padding-left: 20px; }
+    .alerts-steps li { margin: 5px 0; line-height: 1.38; }
+    .alerts-on { color: var(--cp-success, #2faf6b); font-weight: 700; }
+    .alerts-warn { color: #d08416; }
+    .alerts-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
+    .alerts-btn { border: 0; border-radius: 9px; padding: 9px 15px; font-size: .86rem; font-weight: 700; cursor: pointer; }
+    .alerts-btn.primary { background: var(--cp-accent); color: #fff; }
+    .alerts-btn.ghost { background: transparent; border: 1px solid var(--cp-border); color: var(--cp-text-muted); }
+    .alerts-btn.ghost:hover { color: var(--cp-accent); border-color: var(--cp-accent); }
   </style>
 </head>
 <body>
@@ -878,7 +895,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v62";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v63";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -2364,7 +2381,7 @@
     document.getElementById("refreshBtn").addEventListener("click", refreshAll);
     document.getElementById("detClose").addEventListener("click", closeDrawer);
     document.getElementById("detBackdrop").addEventListener("click", closeDrawer);
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (document.body.classList.contains("map-max")) setMapMax(false); else closeDrawer(); } });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { const ab = document.getElementById("alertsBack"); if (ab && ab.classList.contains("open")) { closeAlertsCard(); return; } if (document.body.classList.contains("map-max")) setMapMax(false); else closeDrawer(); } });
 
     // Reload the live trip from Google My Maps, then refresh the weather.
     async function refreshAll() {
@@ -4224,16 +4241,90 @@
         if (sub) await fetch(PUSH_BASE + "/subscribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sub, ...pushIdentity() }) });
       } catch { /* ignore */ }
     }
+    // Detect the platform so the help card shows the right steps. iPadOS 13+ reports
+    // as "Macintosh" but has touch, so treat a touch-Mac as iOS. "standalone" = the PWA
+    // was installed to the Home Screen (required for Web Push on iOS).
+    function alertsPlatform() {
+      const ua = navigator.userAgent || "";
+      const iOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1);
+      const standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+      return { iOS, standalone, android: /Android/.test(ua) };
+    }
+    function closeAlertsCard() { const b = document.getElementById("alertsBack"); if (b) b.classList.remove("open"); renderAlertsBtn(); }
+    // Tapping 🔔 opens this explainer: what alerts you'll get + exactly how to turn them
+    // on for THIS device/platform (iPhone needs the app installed to the Home Screen).
+    function openAlertsCard() {
+      let back = document.getElementById("alertsBack");
+      if (!back) {
+        back = document.createElement("div");
+        back.id = "alertsBack"; back.className = "alerts-back";
+        document.body.appendChild(back);
+        back.addEventListener("click", (e) => { if (e.target === back) closeAlertsCard(); });
+      }
+      const { iOS, standalone, android } = alertsPlatform();
+      const supported = pushSupported();
+      const perm = ("Notification" in window) ? Notification.permission : "unsupported";
+      const on = localStorage.getItem("pushOn") === "1" && perm === "granted";
+      const mustInstall = iOS && !standalone;            // iOS push only works in the installed PWA
+      const canEnable = supported && !mustInstall && perm !== "denied";
+
+      let steps;
+      if (iOS) {
+        steps = `<div class="alerts-steps"><b>On iPhone / iPad</b> (iOS 16.4+)<ol>` +
+          `<li>Open this site in <b>Safari</b>.</li>` +
+          `<li>Tap <b>Share</b> (\u25A1\u2191) \u2192 <b>Add to Home Screen</b> \u2192 <b>Add</b>.</li>` +
+          `<li>Open the app from the new <b>Home\u2011Screen icon</b> (not the Safari tab).</li>` +
+          `<li>Tap <b>\uD83D\uDD14</b> here and choose <b>Allow</b>.</li></ol>` +
+          (mustInstall ? `<p class="alerts-warn">\u26A0\uFE0F You're in a Safari tab \u2014 notifications only work from the installed Home\u2011Screen app.</p>` : ``) +
+          `</div>`;
+      } else if (android) {
+        steps = `<div class="alerts-steps"><b>On Android</b> (Chrome / Edge / Samsung Internet)<ol>` +
+          `<li>Tap <b>Enable notifications</b> below and choose <b>Allow</b>.</li>` +
+          `<li>Recommended: browser <b>\u22EE menu \u2192 Add to Home screen</b>, then open from the icon.</li>` +
+          `<li>For timely alerts: Settings \u2192 Apps \u2192 your browser \u2192 Battery \u2192 <b>Unrestricted</b>.</li></ol></div>`;
+      } else {
+        steps = `<div class="alerts-steps"><b>On desktop</b><ol>` +
+          `<li>Tap <b>Enable notifications</b> below and choose <b>Allow</b> in the browser prompt.</li></ol></div>`;
+      }
+
+      let status = "";
+      if (on) status = `<p class="alerts-on">\u2705 Alerts are ON on this device.</p>`;
+      else if (perm === "denied") status = `<p class="alerts-warn">\u26A0\uFE0F Notifications are <b>blocked</b> for this site. Turn them back on in your browser/site settings, then reopen this.</p>`;
+      else if (!supported && !iOS) status = `<p class="alerts-warn">\u26A0\uFE0F This browser can't show notifications. Try Chrome/Edge (Android/desktop) or an installed app on iPhone.</p>`;
+
+      let actions;
+      if (on) actions = `<button class="alerts-btn ghost" id="alertsOff">Turn off</button><button class="alerts-btn primary" id="alertsClose">Done</button>`;
+      else if (canEnable) actions = `<button class="alerts-btn ghost" id="alertsClose">Not now</button><button class="alerts-btn primary" id="alertsEnable">Enable notifications</button>`;
+      else actions = `<button class="alerts-btn primary" id="alertsClose">Got it</button>`;
+
+      back.innerHTML = `<div class="alerts-card" role="dialog" aria-modal="true" aria-label="Trip alerts">` +
+        `<h3>\uD83D\uDD14 Trip alerts</h3>` +
+        `<p>Get a notification even when the app is closed or your phone is locked: <b>\uD83D\uDC41\uFE0F when someone starts viewing</b>, <b>\u23F1\uFE0F when you've been parked too long</b>, and <b>weather heads\u2011ups</b>.</p>` +
+        status + steps +
+        `<div class="alerts-actions">${actions}</div></div>`;
+      back.classList.add("open");
+      const c = document.getElementById("alertsClose"); if (c) c.addEventListener("click", closeAlertsCard);
+      const en = document.getElementById("alertsEnable");
+      if (en) en.addEventListener("click", async () => {
+        await enablePush();
+        const nowOn = localStorage.getItem("pushOn") === "1" && ("Notification" in window) && Notification.permission === "granted";
+        nowOn ? closeAlertsCard() : openAlertsCard(); // reflect the new state (e.g. if they declined)
+      });
+      const off = document.getElementById("alertsOff"); if (off) off.addEventListener("click", async () => { await disablePush(); closeAlertsCard(); });
+    }
     function initPush() {
       const b = document.getElementById("driveAlerts");
       if (!b) return;
-      if (!pushSupported()) { b.hidden = true; return; }
+      const plat = alertsPlatform();
+      // Show the bell if push works here OR on iOS (where a Safari tab can't subscribe but
+      // the card must still explain how to install). Hide only on truly unsupported browsers.
+      if (!pushSupported() && !plat.iOS) { b.hidden = true; return; }
       b.hidden = false;
-      b.addEventListener("click", togglePush);
+      b.addEventListener("click", openAlertsCard);
       renderAlertsBtn();
       // If already opted in, re-affirm the subscription on load (also refreshes identity).
       // Notification.permission is already "granted" here, so this never prompts.
-      if (localStorage.getItem("pushOn") === "1" && Notification.permission === "granted") enablePush();
+      if (pushSupported() && localStorage.getItem("pushOn") === "1" && Notification.permission === "granted") enablePush();
     }
 
     function initExtras() {
