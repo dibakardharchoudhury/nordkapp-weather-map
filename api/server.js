@@ -319,7 +319,7 @@ app.post("/api/push/test", async (req, res) => {
 // that's actively sharing hasn't moved for a while during the day, we push its own
 // devices once (with a cooldown). Location-based, so it only fires while a car is
 // sharing; it never nags (one nudge per car per hour).
-const DWELL_NUDGE_MS = 40 * 60 * 1000;    // parked this long → nudge
+const DWELL_NUDGE_MS = 15 * 60 * 1000;    // parked this long → nudge
 const DWELL_COOLDOWN_MS = 60 * 60 * 1000; // at most one nudge per car per hour
 const DWELL_MOVE_KM = 0.15;               // moved more than this → reset the dwell clock
 const dwellState = new Map();             // "room|id" → { lat, lng, since, notifiedAt }
