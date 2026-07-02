@@ -754,6 +754,21 @@
     .fam-car { filter: drop-shadow(0 1px 3px rgba(0,0,0,.5)); }
     .fam-car svg { display: block; }
     .fam-label { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--cp-surface, #fff); color: var(--cp-text, #111); font-size: .66rem; font-weight: 700; padding: 1px 7px; border-radius: 8px; white-space: nowrap; border-left: 3px solid var(--c); box-shadow: 0 1px 5px rgba(0,0,0,.3); }
+    /* viewer (read-only watcher) map pin + roster styling */
+    .fam-eye { font-size: 20px; line-height: 1; filter: drop-shadow(0 1px 3px rgba(0,0,0,.5)); text-align: center; }
+    .fam-label.vw { bottom: 22px; }
+    .tg-sec { font-size: .66rem; text-transform: uppercase; letter-spacing: .1em; color: var(--cp-text-soft); margin: 10px 0 2px; font-weight: 700; }
+    .tg-veye { font-size: 16px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+    .tg-vmember .tg-name { font-weight: 600; }
+    .tg-viewer { margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--cp-border); }
+    .tg-view-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #7a5cff; background: var(--cp-surface, #fff); color: #7a5cff; border-radius: 9px; padding: 6px 12px; font-size: .84rem; font-weight: 700; cursor: pointer; }
+    .tg-view-btn:hover { background: rgba(122,92,255,.10); }
+    .tg-view-btn.locked, .tg-view-btn:disabled { border-style: dashed; opacity: .55; cursor: not-allowed; color: var(--cp-text-soft); border-color: var(--cp-border); background: transparent; }
+    /* in-app toast — "someone is viewing" notifications */
+    .toast-host { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 3000; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; max-width: min(92vw, 420px); }
+    .toast { pointer-events: auto; background: var(--cp-surface, #fff); color: var(--cp-text, #111); border: 1px solid var(--cp-border); border-left: 4px solid #7a5cff; border-radius: 11px; padding: 10px 14px; font-size: .82rem; line-height: 1.35; box-shadow: 0 6px 22px rgba(0,0,0,.28); opacity: 0; transform: translateY(10px); transition: opacity .25s ease, transform .25s ease; cursor: pointer; }
+    .toast.in { opacity: 1; transform: translateY(0); }
+    .toast b { color: var(--cp-text, #111); }
   </style>
 </head>
 <body>
@@ -862,7 +877,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v60";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v61";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -3124,7 +3139,7 @@
     }
     function familySpeechText() {
       if (!userLoc) return "";
-      const others = (togetherMembers || []).filter((m) => Number.isFinite(m.lat) && Number.isFinite(m.lng));
+      const others = (togetherMembers || []).filter((m) => m.role !== "viewer" && Number.isFinite(m.lat) && Number.isFinite(m.lng));
       if (!others.length) return "";
       const spokenDist = (km) => km < 1 ? `${Math.round(km * 1000)} metres` : `${km < 10 ? km.toFixed(1) : Math.round(km)} kilometres`;
       const spokenDir = (deg) => ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"][Math.round((((deg % 360) + 360) % 360) / 45) % 8];
@@ -3141,7 +3156,7 @@
     }
     function maybeSpeakFamily(force) {
       if (!voiceOn || !togetherName || !userLoc) return;
-      const others = (togetherMembers || []).filter((m) => Number.isFinite(m.lat) && Number.isFinite(m.lng));
+      const others = (togetherMembers || []).filter((m) => m.role !== "viewer" && Number.isFinite(m.lat) && Number.isFinite(m.lng));
       if (!others.length) return;
       const sig = (famLastPlace["__me"] || "") + "|" + others.map((m) => `${m.name}:${famLastPlace[m.id] || ""}`).join("|");
       const now = Date.now();
@@ -3285,6 +3300,9 @@
     let togetherFull = false;
     let togetherActive = false; // true only while the HUD is open & the heartbeat runs (gates async side-effects)
     let myIdentity = "";        // this device's bound person — once chosen, only this name is selectable here
+    let viewerMode = false;     // this device joined as a read-only VIEWER (watches the 3 cars; shares its own location; not one of the fleet)
+    let viewerId = "";          // stable per-device viewer id (localStorage) — reused so a viewer keeps its single slot
+    const knownViewerIds = new Set(); // viewer ids we've already announced, so a "someone is viewing" toast fires once per new viewer
     let familyMarkers = {};     // Leaflet markers for the other live family cars, keyed by member id
     let wakeLock = null;        // Screen Wake Lock — keeps GPS flowing while Together is on
     let lastFixReqAt = 0;       // throttle one-shot getCurrentPosition requests
@@ -3393,7 +3411,7 @@
           } finally { clearTimeout(t); }
           famPlaceCache[key] = { pending: false, at: Date.now(), text: formatPrecisePlace(d) || null };
         } catch { famPlaceCache[key] = { pending: false, at: Date.now(), text: null }; }
-        if (togetherName) renderTogether(); // re-render once the real place name arrives
+        if (togetherName || viewerMode) renderTogether(); // re-render once the real place name arrives (car or viewer)
       }, null, true); // priority — jump the boot prewarm queue
       return undefined;
     }
@@ -3588,18 +3606,33 @@
         iconSize: [50, 30], iconAnchor: [25, 22], popupAnchor: [0, -22],
       });
     }
+    // A read-only VIEWER (not one of the three cars) — drawn as a distinct eye pin so
+    // it's never mistaken for a fleet car. Viewers still share their own location so
+    // the family can see who is watching and from where.
+    function viewerIcon(name) {
+      return L.divIcon({
+        className: "",
+        html: `<div class="fam-wrap"><div class="fam-label vw" style="--c:#7a5cff">${chatEsc(name || "Viewer")}</div><div class="fam-eye">👁️</div></div>`,
+        iconSize: [50, 30], iconAnchor: [25, 20], popupAnchor: [0, -20],
+      });
+    }
     function updateFamilyMarkers() {
       if (!map) return;
       const seen = new Set();
       (togetherMembers || []).forEach((mb) => {
         seen.add(mb.id);
+        const isViewer = mb.role === "viewer";
         const car = carForName(mb.name);
         let mk = familyMarkers[mb.id];
-        const popup = `<b>${chatEsc(mb.name)}</b><br>${chatEsc(car.model)}<br>` +
-          `<span style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em">${mb.lat.toFixed(5)}, ${mb.lng.toFixed(5)}</span>`;
-        if (mk) { mk.setLatLng([mb.lat, mb.lng]); mk.setIcon(famIcon(mb.name, car)); mk.setPopupContent(popup); }
+        const popup = isViewer
+          ? `<b>${chatEsc(mb.name || "Viewer")}</b><br>👁️ Watching the trip<br>` +
+            `<span style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em">${mb.lat.toFixed(5)}, ${mb.lng.toFixed(5)}</span>`
+          : `<b>${chatEsc(mb.name)}</b><br>${chatEsc(car.model)}<br>` +
+            `<span style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em">${mb.lat.toFixed(5)}, ${mb.lng.toFixed(5)}</span>`;
+        const icon = isViewer ? viewerIcon(mb.name) : famIcon(mb.name, car);
+        if (mk) { mk.setLatLng([mb.lat, mb.lng]); mk.setIcon(icon); mk.setPopupContent(popup); }
         else {
-          mk = L.marker([mb.lat, mb.lng], { icon: famIcon(mb.name, car), zIndexOffset: 900 })
+          mk = L.marker([mb.lat, mb.lng], { icon, zIndexOffset: isViewer ? 850 : 900 })
             .bindPopup(popup).addTo(map);
           familyMarkers[mb.id] = mk;
         }
@@ -3612,6 +3645,46 @@
     function clearFamilyMarkers() {
       Object.keys(familyMarkers).forEach((id) => { try { map.removeLayer(familyMarkers[id]); } catch { /* ignore */ } });
       familyMarkers = {};
+    }
+    // Show a small in-app toast in the corner. Auto-dismisses; stacks are trimmed so a
+    // burst never buries the map. Used to announce when someone starts viewing the trip.
+    function showToast(html, ms) {
+      let host = document.getElementById("toastHost");
+      if (!host) {
+        host = document.createElement("div");
+        host.id = "toastHost";
+        host.className = "toast-host";
+        document.body.appendChild(host);
+      }
+      const t = document.createElement("div");
+      t.className = "toast";
+      t.innerHTML = html;
+      host.appendChild(t);
+      while (host.children.length > 3) host.removeChild(host.firstChild);
+      requestAnimationFrame(() => t.classList.add("in"));
+      const kill = () => { t.classList.remove("in"); setTimeout(() => t.remove(), 300); };
+      t.addEventListener("click", kill);
+      setTimeout(kill, ms || 8000);
+    }
+    // Announce (once) when a NEW viewer starts watching, including where they are.
+    // Fires on cars AND on other viewers — anyone in the room is told "someone is
+    // watching" with that viewer's reverse-geocoded place (coords as a fallback).
+    function notifyNewViewers(members) {
+      const liveViewerIds = new Set();
+      (members || []).forEach((mb) => {
+        if (mb.role !== "viewer") return;
+        liveViewerIds.add(mb.id);
+        if (knownViewerIds.has(mb.id)) return;      // already announced this viewer
+        knownViewerIds.add(mb.id);
+        let where = "";
+        if (Number.isFinite(mb.lat) && Number.isFinite(mb.lng)) {
+          const place = famPlaceFor(mb.lat, mb.lng);
+          where = place ? ` from <b>${chatEsc(place)}</b>` : ` near <b>${mb.lat.toFixed(3)}, ${mb.lng.toFixed(3)}</b>`;
+        }
+        showToast(`👁️ <b>${chatEsc(mb.name || "Someone")}</b> is now viewing the trip${where}.`);
+      });
+      // Forget viewers who have left, so if they return later we announce them again.
+      knownViewerIds.forEach((id) => { if (!liveViewerIds.has(id)) knownViewerIds.delete(id); });
     }
     // Grab a single high-accuracy fix on demand. Together mode relies on Drive's
     // watchPosition, but that can be slow to first-fix or paused while the screen
@@ -3673,7 +3746,7 @@
         // dimmed as "signal lost" for the whole tunnel; with the screen locked JS freezes, so we
         // simply fade and drop after the server's grace window. Either way we rejoin automatically
         // the instant a fresh fix returns.
-        const wantShare = !!togetherName && document.visibilityState !== "hidden";
+        const wantShare = (!!togetherName || viewerMode) && document.visibilityState !== "hidden";
         if (wantShare && !userLoc) acquireFix(false); // no fix yet — go get one so we actually register
         const fixFresh = !!userLoc && (Date.now() - userFixAt) <= TOGETHER_STALE_MS;
         const broadcasting = wantShare && fixFresh;
@@ -3687,7 +3760,8 @@
         const keepalive = wantShare && !broadcasting && !!togetherId;
         let body;
         if (broadcasting && userLoc) {
-          body = { room: TOGETHER_ROOM, id: togetherId, name: togetherName, lat: userLoc.lat, lng: userLoc.lon };
+          body = { room: TOGETHER_ROOM, id: togetherId, name: viewerMode ? "Viewer" : togetherName, lat: userLoc.lat, lng: userLoc.lon };
+          if (viewerMode) body.role = "viewer"; // read-only watcher — capped at 2, drawn as an eye pin, never a fleet car
           if (userLoc.acc != null) body.acc = userLoc.acc; // share fix accuracy so others can judge precision
         } else if (keepalive) {
           body = { room: TOGETHER_ROOM, id: togetherId, keepalive: true };
@@ -3717,6 +3791,7 @@
         // back — filter it out so we never show up twice (roster + a stray map marker).
         togetherMembers = (Array.isArray(data.members) ? data.members : [])
           .filter((m) => !togetherId || m.id !== togetherId);
+        notifyNewViewers(togetherMembers); // toast when someone new starts watching (with their location)
         updateFamilyMarkers();
         renderTogether();
       } catch { /* offline — keep last known positions */ }
@@ -3743,15 +3818,138 @@
       try { localStorage.removeItem("togetherName"); } catch { /* ignore */ }
       renderTogether();
     }
+    // A stable per-device viewer id, minted once and reused so a viewer always
+    // reclaims its single slot (rather than piling up new entries on every rejoin).
+    function ensureViewerId() {
+      if (viewerId) return viewerId;
+      try { viewerId = localStorage.getItem("viewerId") || ""; } catch { /* ignore */ }
+      if (!viewerId) {
+        viewerId = "viewer-" + naUuid();
+        try { localStorage.setItem("viewerId", viewerId); } catch { /* ignore */ }
+      }
+      return viewerId;
+    }
+    // Join as a read-only VIEWER — watch the three cars without being one of them.
+    // A device bound to a car (myIdentity set) must Stop sharing + Reset first, so a
+    // car can never slip into viewer mode while still holding a fleet identity.
+    function joinAsViewer() {
+      if (myIdentity) { renderTogether(); return; }
+      viewerMode = true;
+      togetherName = "";
+      ensureViewerId();
+      togetherId = viewerId;             // broadcast + self-exclude under our stable viewer id
+      try { localStorage.setItem("viewerMode", "1"); } catch { /* ignore */ }
+      renderTogether();
+      acquireFix(true);                  // share a fix at once so the family sees who's watching
+      pushTogether();
+      try { if (window.naTrack) window.naTrack("viewer_join"); } catch {}
+    }
+    // Stop viewing and return to the picker (drops our viewer pin from the room).
+    function leaveViewer() {
+      sendLeave();
+      viewerMode = false; togetherId = "";
+      try { localStorage.removeItem("viewerMode"); } catch { /* ignore */ }
+      renderTogether();
+    }
+    // One live roster row for a car — extracted so both the car HUD and the viewer
+    // HUD render the fleet identically (distance/direction/place/coords/staleness).
+    function carMemberRowHtml(mb) {
+      const car = carForName(mb.name);
+      const has = Number.isFinite(mb.lat) && Number.isFinite(mb.lng);
+      const km = (userLoc && has) ? distKm(userLoc.lat, userLoc.lon, mb.lat, mb.lng) : null;
+      const dir = (userLoc && has) ? compass16(bearingDeg({ lat: userLoc.lat, lon: userLoc.lon }, { lat: mb.lat, lon: mb.lng })) : null;
+      const eta = (km != null && km > 0.5) ? Math.max(1, Math.round(km / 70 * 60)) : null;
+      const ago = Math.max(0, Math.round((Date.now() - mb.ts) / 1000));
+      const stale = (Date.now() - mb.ts) > TOGETHER_STALE_MS; // no fresh fix — paused / locked / no signal
+      const agoTxt = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
+      let whereTxt = "";
+      if (has) {
+        const place = famPlaceFor(mb.lat, mb.lng);
+        if (place) famLastPlace[mb.id] = place;
+        const shown = place || famLastPlace[mb.id];
+        whereTxt = shown ? `📍 ${chatEsc(shown)}` : `📍 locating…`;
+      }
+      const coordTxt = has ? `${mb.lat.toFixed(5)}, ${mb.lng.toFixed(5)}` : "";
+      const accTxt = (has && Number.isFinite(mb.acc) && mb.acc > 150)
+        ? ` · ±${mb.acc >= 1000 ? (mb.acc / 1000).toFixed(1) + " km" : Math.round(mb.acc) + " m"}`
+        : "";
+      const meta = stale
+        ? `<span class="tg-lost">📡 signal lost</span><br><span style="font-size:.68rem">last seen ${agoTxt}</span>`
+        : (km != null
+          ? `<b>${distLabel(km)}</b>${dir ? " · " + dir : ""}${eta ? "<br>~" + eta + " min" : ""}<br><span style="font-size:.68rem">${agoTxt}</span>`
+          : agoTxt);
+      return `<div class="tg-member${stale ? " stale" : ""}"><div class="tg-mic">${carSvg(car, 17)}</div>` +
+        `<div class="tg-info"><div class="tg-name">${chatEsc(mb.name)}</div><div class="tg-model">${chatEsc(car.model)}</div>` +
+        `${whereTxt ? `<div class="tg-where">${whereTxt}</div>` : ""}` +
+        `${coordTxt ? `<div class="tg-coord">${coordTxt}${accTxt}</div>` : ""}</div>` +
+        `<div class="tg-meta">${meta}</div></div>`;
+    }
+    // One roster row for a viewer (shown to cars, and to other viewers). Compact —
+    // just who's watching and where they are.
+    function viewerRowHtml(mb) {
+      const has = Number.isFinite(mb.lat) && Number.isFinite(mb.lng);
+      let whereTxt = "";
+      if (has) {
+        const place = famPlaceFor(mb.lat, mb.lng);
+        if (place) famLastPlace[mb.id] = place;
+        const shown = place || famLastPlace[mb.id];
+        whereTxt = shown ? `📍 ${chatEsc(shown)}` : `📍 locating…`;
+      }
+      const ago = Math.max(0, Math.round((Date.now() - mb.ts) / 1000));
+      const agoTxt = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
+      const coordTxt = has ? `${mb.lat.toFixed(5)}, ${mb.lng.toFixed(5)}` : "";
+      return `<div class="tg-member tg-vmember"><div class="tg-mic tg-veye">👁️</div>` +
+        `<div class="tg-info"><div class="tg-name">${chatEsc(mb.name || "Viewer")}</div><div class="tg-model">Viewer</div>` +
+        `${whereTxt ? `<div class="tg-where">${whereTxt}</div>` : ""}` +
+        `${coordTxt ? `<div class="tg-coord">${coordTxt}</div>` : ""}</div>` +
+        `<div class="tg-meta">${agoTxt}</div></div>`;
+    }
+    // The HUD for a device that joined as a VIEWER: your own share status, then the
+    // three cars (the whole point), then any co-viewers also watching.
+    function renderViewerRoster(el) {
+      const youLive = !!userLoc;
+      const youStale = youLive && (Date.now() - userFixAt) > TOGETHER_STALE_MS;
+      let youWhere = "";
+      if (youLive) {
+        const myPlace = famPlaceFor(userLoc.lat, userLoc.lon);
+        if (myPlace) famLastPlace["__me"] = myPlace;
+        const shown = myPlace || famLastPlace["__me"];
+        youWhere = shown ? `📍 ${chatEsc(shown)}` : "";
+      }
+      let html = `<div class="tg-h">👁️ Viewer · watching live<button type="button" class="tg-switch" id="tgViewStop" title="Stop viewing — back to the picker">Stop viewing</button></div>`;
+      html += `<div class="tg-member tg-vmember"><div class="tg-mic tg-veye">👁️</div>` +
+        `<div class="tg-info"><div class="tg-name">You (viewer)</div><div class="tg-model">Watching the trip</div>` +
+        `<div class="tg-where">${!youLive ? "📡 acquiring GPS…" : youStale ? "📡 GPS paused — reconnecting…" : "🟢 sharing your location"}</div>` +
+        `${youWhere ? `<div class="tg-where">${youWhere}</div>` : ""}` +
+        `${youLive ? `<div class="tg-coord">${userLoc.lat.toFixed(5)}, ${userLoc.lon.toFixed(5)}</div>` : ""}</div></div>`;
+      const cars = (togetherMembers || []).filter((m) => m.role !== "viewer");
+      const viewers = (togetherMembers || []).filter((m) => m.role === "viewer");
+      if (!cars.length) {
+        html += `<div class="tg-hint">Waiting for the cars… their live pins appear here and on the map the moment they start sharing.</div>`;
+      } else {
+        html += `<div class="tg-sec">🚗 Cars</div>`;
+        cars.forEach((mb) => { html += carMemberRowHtml(mb); });
+      }
+      if (viewers.length) {
+        html += `<div class="tg-sec">👁️ Also watching</div>`;
+        viewers.forEach((mb) => { html += viewerRowHtml(mb); });
+      }
+      html += `<div class="tg-hint">You're a viewer — you see the three cars but you're not part of the fleet. Your location is shared so the family knows who's watching. Max 2 viewers.</div>`;
+      el.innerHTML = html;
+      const vs = document.getElementById("tgViewStop");
+      if (vs) vs.addEventListener("click", leaveViewer);
+      maybeSpeakFamily(false);
+    }
     function renderTogether() {
       const el = document.getElementById("togetherBody");
       if (!el) return;
       // --- Not joined yet: show the name picker (three cars, one name each). ---
-      if (!togetherName) {
+      if (!togetherName && !viewerMode) {
         // One slot per car. A car already shared from another device is locked —
         // you can only pick a FREE name, never take over someone else's identity.
         const occupiedCars = {};
         (togetherMembers || []).forEach((m) => {
+          if (m.role === "viewer") return; // viewers never occupy a car slot
           // Prefer the car encoded in the id ("car-<key>"); fall back to the car mapped
           // from the name so a member on an older cached app (non-"car-" id) still
           // lights the right slot's green dot.
@@ -3759,7 +3957,7 @@
           if (!ck) ck = TOGETHER_NAME_CAR[String(m.name || "").trim().toLowerCase()] || null;
           if (ck) occupiedCars[ck] = m.name || "Sharing";
         });
-        const activeCount = (togetherMembers || []).length;
+        const activeCount = (togetherMembers || []).filter((m) => m.role !== "viewer").length;
         const bound = (myIdentity || "").trim().toLowerCase();   // this device's person, once chosen
         const header = bound
           ? `👫 Together mode · you are ${chatEsc(myIdentity)}`
@@ -3793,6 +3991,21 @@
         html += bound
           ? `<div class="tg-hint">This device is set up as <b>${chatEsc(myIdentity)}</b> — only your own name shares your location, so you can't be mixed up with another car. <button type="button" class="tg-reset" id="tgReset">Not ${chatEsc(myIdentity)}? Reset this device</button></div>`
           : `<div class="tg-hint">${activeCount ? `${activeCount} already sharing live from their own device. ` : ""}Pick your name — it locks to this device, so you'll always share as you. Visible to family only while Together mode is on.</div>`;
+        // --- Viewer mode — anybody can just watch the three cars (no fleet identity). ---
+        // Sharing your own location is required so the family sees who's watching, and
+        // only 2 viewers are allowed. A device already bound to a car must Stop sharing
+        // & Reset first (that clears myIdentity) before it can watch as a viewer.
+        const viewerCount = (togetherMembers || []).filter((m) => m.role === "viewer").length;
+        const viewerFull = viewerCount >= 2;
+        const viewerLocked = !!bound || viewerFull;
+        const viewerTitle = bound ? `Reset this device below to watch as a viewer`
+          : viewerFull ? `2 viewers already watching — that's the limit`
+          : `Watch the three cars live (shares your location; max 2 viewers)`;
+        html += `<div class="tg-viewer"><button type="button" class="tg-view-btn${viewerLocked ? " locked" : ""}" id="tgViewJoin"${viewerLocked ? " disabled" : ""} title="${chatEsc(viewerTitle)}">👁️ Just view the cars${viewerCount ? ` · ${viewerCount}/2 watching` : ""}</button>`;
+        html += `<div class="tg-hint">${bound
+          ? `You're set up as <b>${chatEsc(myIdentity)}</b>. Stop sharing &amp; reset this device (above) to switch to viewer mode.`
+          : viewerFull ? `Both viewer slots are in use right now — try again shortly.`
+          : `See where the three cars are without being one of them. Your location is shared so the family knows who's watching. Max 2 viewers.`}</div></div>`;
         el.innerHTML = html;
         el.querySelectorAll(".tg-pick:not([disabled])").forEach((b) => b.addEventListener("click", () => joinTogether(b.dataset.name)));
         const rb = document.getElementById("tgReset");
@@ -3801,9 +4014,13 @@
           try { localStorage.removeItem("myIdentity"); } catch { /* ignore */ }
           renderTogether();
         });
+        const vj = document.getElementById("tgViewJoin");
+        if (vj) vj.addEventListener("click", joinAsViewer);
         return;
       }
-      // --- Joined: show the live roster (you + the others). ---
+      // --- Joined as a VIEWER: watch the three cars (you share your location too). ---
+      if (viewerMode) { renderViewerRoster(el); return; }
+      // --- Joined as a car: show the live roster (you + the others). ---
       const me = carForName(togetherName);
       const youLive = !!userLoc; // we only truly broadcast once we hold a GPS fix
       const youStale = youLive && (Date.now() - userFixAt) > TOGETHER_STALE_MS; // GPS stalled (tunnel/locked)
@@ -3821,11 +4038,13 @@
         `${youWhere ? `<div class="tg-where">${youWhere}</div>` : ""}` +
         `${youLive ? `<div class="tg-coord">${userLoc.lat.toFixed(5)}, ${userLoc.lon.toFixed(5)}</div>` : ""}</div></div>`;
       const others = togetherMembers || [];
-      if (!others.length) {
+      const cars = others.filter((m) => m.role !== "viewer"); // the fleet (viewers are shown separately, below)
+      const viewers = others.filter((m) => m.role === "viewer");
+      if (!cars.length && !viewers.length) {
         html += `<div class="tg-hint">${!youLive ? "📡 Acquiring your GPS… check that location permission is allowed." : youStale ? "📡 GPS paused — the family keeps your last spot until you reconnect." : "✅ You're live and sharing your location."}</div>`;
       } else {
-        // Everyone currently sharing a fix (you + members with coords).
-        const located = others.filter((mb) => Number.isFinite(mb.lat) && Number.isFinite(mb.lng));
+        // Everyone currently sharing a fix (you + cars with coords).
+        const located = cars.filter((mb) => Number.isFinite(mb.lat) && Number.isFinite(mb.lng));
         const pos = located.map((mb) => ({ lat: mb.lat, lng: mb.lng, you: false }));
         if (userLoc) pos.push({ lat: userLoc.lat, lng: userLoc.lon, you: true });
 
@@ -3856,40 +4075,13 @@
           html += `<div class="tg-hint">📡 Acquiring your GPS… the distance & direction to each car appear once your own location is live. Tap ⟳ above to retry, or allow location access for this site.</div>`;
         }
 
-        others.forEach((mb) => {
-          const car = carForName(mb.name);
-          const has = Number.isFinite(mb.lat) && Number.isFinite(mb.lng);
-          const km = (userLoc && has) ? distKm(userLoc.lat, userLoc.lon, mb.lat, mb.lng) : null;
-          const dir = (userLoc && has) ? compass16(bearingDeg({ lat: userLoc.lat, lon: userLoc.lon }, { lat: mb.lat, lon: mb.lng })) : null;
-          const eta = (km != null && km > 0.5) ? Math.max(1, Math.round(km / 70 * 60)) : null;
-          const ago = Math.max(0, Math.round((Date.now() - mb.ts) / 1000));
-          const stale = (Date.now() - mb.ts) > TOGETHER_STALE_MS; // no fresh fix — paused / locked / no signal
-          const agoTxt = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
-          // Where they actually are — precise reverse-geocoded place (road + town),
-          // never an approximated "nearest stop". The exact coords are shown too.
-          let whereTxt = "";
-          if (has) {
-            const place = famPlaceFor(mb.lat, mb.lng);
-            if (place) famLastPlace[mb.id] = place;        // remember the last good place for this car
-            const shown = place || famLastPlace[mb.id];    // keep showing it while a newer fix resolves
-            whereTxt = shown ? `📍 ${chatEsc(shown)}` : `📍 locating…`;
-          }
-          const coordTxt = has ? `${mb.lat.toFixed(5)}, ${mb.lng.toFixed(5)}` : "";
-          // Flag a coarse GPS fix (Wi-Fi/cell), which can place a car off by km.
-          const accTxt = (has && Number.isFinite(mb.acc) && mb.acc > 150)
-            ? ` · ±${mb.acc >= 1000 ? (mb.acc / 1000).toFixed(1) + " km" : Math.round(mb.acc) + " m"}`
-            : "";
-          const meta = stale
-            ? `<span class="tg-lost">📡 signal lost</span><br><span style="font-size:.68rem">last seen ${agoTxt}</span>`
-            : (km != null
-              ? `<b>${distLabel(km)}</b>${dir ? " · " + dir : ""}${eta ? "<br>~" + eta + " min" : ""}<br><span style="font-size:.68rem">${agoTxt}</span>`
-              : agoTxt);
-          html += `<div class="tg-member${stale ? " stale" : ""}"><div class="tg-mic">${carSvg(car, 17)}</div>` +
-            `<div class="tg-info"><div class="tg-name">${chatEsc(mb.name)}</div><div class="tg-model">${chatEsc(car.model)}</div>` +
-            `${whereTxt ? `<div class="tg-where">${whereTxt}</div>` : ""}` +
-            `${coordTxt ? `<div class="tg-coord">${coordTxt}${accTxt}</div>` : ""}</div>` +
-            `<div class="tg-meta">${meta}</div></div>`;
-        });
+        cars.forEach((mb) => { html += carMemberRowHtml(mb); });
+        // Anyone watching as a viewer (read-only) — shown so the fleet always knows
+        // who's following along and from where, alongside the "someone is viewing" toast.
+        if (viewers.length) {
+          html += `<div class="tg-sec">👁️ Watching</div>`;
+          viewers.forEach((mb) => { html += viewerRowHtml(mb); });
+        }
       }
       el.innerHTML = html;
       const sw = document.getElementById("tgSwitch");
@@ -3900,10 +4092,14 @@
       togetherActive = true;
       try { togetherName = localStorage.getItem("togetherName") || ""; } catch { togetherName = ""; }
       try { myIdentity = localStorage.getItem("myIdentity") || ""; } catch { myIdentity = ""; }
-      togetherId = togetherName ? slugId(togetherName) : "";
+      try { viewerMode = localStorage.getItem("viewerMode") === "1"; } catch { viewerMode = false; }
+      if (togetherName) viewerMode = false; // a bound car identity always wins over a stale viewer flag
+      if (viewerMode) { ensureViewerId(); togetherId = viewerId; }
+      else togetherId = togetherName ? slugId(togetherName) : "";
       togetherMembers = []; togetherFull = false;
+      knownViewerIds.clear();               // re-announce watchers fresh each session
       renderTogether();
-      if (togetherName) acquireFix(true); // already opted in — register a fix at once
+      if (togetherName || viewerMode) acquireFix(true); // already opted in (car or viewer) — register a fix at once
       pushTogether();
       if (togetherTimer) clearInterval(togetherTimer);
       togetherTimer = setInterval(pushTogether, TOGETHER_POLL_MS); // refresh everyone ~every 5 s
@@ -3913,6 +4109,7 @@
       sendLeave(); // drop us from the family roster immediately (no TTL-grace wait)
       if (togetherTimer) { clearInterval(togetherTimer); togetherTimer = null; }
       togetherMembers = [];
+      knownViewerIds.clear();
       clearFamilyMarkers();
       const el = document.getElementById("togetherBody");
       if (el) el.innerHTML = "";
@@ -3960,14 +4157,14 @@
           if (togetherTimer) { clearInterval(togetherTimer); togetherTimer = null; }
         } else {
           requestWakeLock();
-          if (togetherName) acquireFix(true);            // fresh fix + broadcast so we reappear at once
+          if (togetherName || viewerMode) acquireFix(true);            // fresh fix + broadcast so we reappear at once
           if (!togetherTimer) togetherTimer = setInterval(pushTogether, TOGETHER_POLL_MS);
           pushTogether();
         }
       });
       // A genuine close/unload should drop us immediately; a bfcache hide (the page may
       // resume — e.g. screen lock) must not, so we only leave when not persisted.
-      window.addEventListener("pagehide", (e) => { if (!e.persisted && togetherActive && togetherName) sendLeave(); });
+      window.addEventListener("pagehide", (e) => { if (!e.persisted && togetherActive && (togetherName || viewerMode)) sendLeave(); });
       updateNet();
       window.addEventListener("online", updateNet);
       window.addEventListener("offline", updateNet);

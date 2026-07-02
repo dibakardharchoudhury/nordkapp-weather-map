@@ -15,6 +15,7 @@ const {
   cleanMemberName,
   TOGETHER_TTL_MS,
   TOGETHER_MAX_MEMBERS,
+  TOGETHER_MAX_VIEWERS,
 } = await import("./server.js");
 
 const ROOM = "nordkapp-fam-7e3a";
@@ -223,6 +224,42 @@ const scenarios = {
     eq(roomKey.length, 40, "room truncated to 40");
     const idKey = [...togetherRooms.get(roomKey).keys()][0];
     eq(idKey.length, 64, "id truncated to 64");
+  },
+
+  "S16 role echoed: cars default to 'car'; a viewer is tagged 'viewer'": () => {
+    reset();
+    call(A); // no role -> car
+    call({ room: ROOM, id: "viewer-abc", name: "Viewer", lat: 60, lng: 11, role: "viewer" });
+    const r = call(B); // B sees A (car) and the viewer
+    const a = r.body.members.find((m) => m.id === "car-modelx");
+    const v = r.body.members.find((m) => m.id === "viewer-abc");
+    eq(a.role, "car", "car member echoes role car");
+    eq(v.role, "viewer", "viewer member echoes role viewer");
+    eq(memberOf("viewer-abc").role, "viewer", "viewer stored with role");
+  },
+
+  "S17 viewer cap: a 3rd viewer evicts the stalest viewer, never a car": () => {
+    reset();
+    call(A); call(B); call(D); // 3 cars
+    call({ room: ROOM, id: "viewer-1", name: "Viewer", lat: 60, lng: 11, role: "viewer" });
+    call({ room: ROOM, id: "viewer-2", name: "Viewer", lat: 61, lng: 12, role: "viewer" });
+    eq([...roomMap().values()].filter((v) => v.role === "viewer").length, TOGETHER_MAX_VIEWERS, "two viewers present");
+    // Make viewer-1 the clear stalest, then a 3rd viewer joins.
+    memberOf("viewer-1").seen = Date.now() - 999999;
+    call({ room: ROOM, id: "viewer-3", name: "Viewer", lat: 62, lng: 13, role: "viewer" });
+    eq([...roomMap().values()].filter((v) => v.role === "viewer").length, TOGETHER_MAX_VIEWERS, "still capped at 2 viewers");
+    ok(!roomMap().has("viewer-1"), "stalest viewer evicted");
+    ok(roomMap().has("viewer-3"), "newest viewer present");
+    ok(roomMap().has("car-modelx") && roomMap().has("car-modely_lr") && roomMap().has("car-modely_p"), "all 3 cars untouched");
+  },
+
+  "S18 a returning viewer reuses its own slot (no eviction, no duplicate)": () => {
+    reset();
+    call({ room: ROOM, id: "viewer-1", name: "Viewer", lat: 60, lng: 11, role: "viewer" });
+    call({ room: ROOM, id: "viewer-2", name: "Viewer", lat: 61, lng: 12, role: "viewer" });
+    call({ room: ROOM, id: "viewer-1", name: "Viewer", lat: 60.5, lng: 11.5, role: "viewer" }); // upsert self
+    eq([...roomMap().values()].filter((v) => v.role === "viewer").length, 2, "same two viewers, no third slot");
+    eq(memberOf("viewer-1").lat, 60.5, "viewer-1 position upserted");
   },
 };
 

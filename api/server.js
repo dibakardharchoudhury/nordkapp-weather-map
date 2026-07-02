@@ -142,9 +142,10 @@ app.get("/api/context", async (_req, res) => {
 // design — entries self-expire, and rooms/members are capped to bound abuse. The
 // existing per-IP rate limiter (globalLimiter) protects this endpoint too.
 const TOGETHER_TTL_MS = 3_600_000;  // BACKSTOP only — prune a member 60 min after their last CONTACT (seen). Removal is intent-driven: an explicit Stop / exit / clean app close drops a car instantly (leave). This long window exists solely to mop up UN-clean exits (crash, force-kill, battery death) where no leave signal was sent. A car with coverage but no fix (long tunnel, screen on) keepalive-pings so it never prunes; a car in a real no-signal dead zone (e.g. Tromsø↔Hammerfest) can't ping, so the family keeps its last-known spot dimmed as "signal lost · last seen Xm ago" for up to this window, then it clears.
-const TOGETHER_MAX_MEMBERS = 8;     // per room — one slot per car (3 cars); headroom covers mixed app versions during rollout
+const TOGETHER_MAX_MEMBERS = 8;     // per room — 3 cars + up to 2 viewers = 5; headroom covers mixed app versions during rollout
+const TOGETHER_MAX_VIEWERS = 2;     // per room — read-only "viewer" role is capped separately from the cars; a 3rd viewer evicts the stalest one
 const TOGETHER_MAX_ROOMS = 500;
-const togetherRooms = new Map();    // room -> Map(id -> { name, lat, lng, acc, ts, seen }) — ts = last fix time (drives client staleness); seen = last contact (drives TTL prune)
+const togetherRooms = new Map();    // room -> Map(id -> { name, lat, lng, acc, role, ts, seen }) — role "car"|"viewer"; ts = last fix time (drives client staleness); seen = last contact (drives TTL prune)
 
 function pruneTogether(room) {
   const m = togetherRooms.get(room);
@@ -193,6 +194,25 @@ function handleTogether(req, res) {
       m = new Map();
       togetherRooms.set(room, m);
     }
+    // A member is either a car (the travelling fleet, default) or a read-only
+    // "viewer" who only watches the cars. Viewers still share their own location so
+    // the family can see who's watching and from where, but they're capped SEPARATELY
+    // from the cars so a crowd of viewers can never crowd the fleet out of the room.
+    const role = b.role === "viewer" ? "viewer" : "car";
+    if (!m.has(id) && role === "viewer") {
+      // Enforce the viewer cap the same forgiving way as the room cap: never reject a
+      // (re)join — instead, when a NEW viewer arrives and the room is already at the
+      // viewer limit, evict the STALEST viewer (oldest last-contact). Same-id rejoins
+      // upsert below via m.has(id), so a returning viewer keeps its slot.
+      let viewers = 0, evictId = null, oldest = Infinity;
+      for (const [eid, ev] of m) {
+        if (ev.role !== "viewer") continue;
+        viewers++;
+        const s = ev.seen ?? ev.ts ?? 0;
+        if (s < oldest) { oldest = s; evictId = eid; }
+      }
+      if (viewers >= TOGETHER_MAX_VIEWERS && evictId) m.delete(evictId);
+    }
     if (!m.has(id) && m.size >= TOGETHER_MAX_MEMBERS) {
       // Never reject a (re)join with "room full". The cap bounds memory, but a real
       // traveller must ALWAYS be able to join/rejoin and resume tracking — so instead of
@@ -208,7 +228,7 @@ function handleTogether(req, res) {
       if (evictId) m.delete(evictId);
     }
     const acc = finiteIn(b.acc, 0, 100000) ? b.acc : null; // GPS accuracy radius (m), if reported
-    m.set(id, { name: cleanMemberName(b.name) || "Traveller", lat: b.lat, lng: b.lng, acc, ts: now, seen: now });
+    m.set(id, { name: cleanMemberName(b.name) || "Traveller", lat: b.lat, lng: b.lng, acc, role, ts: now, seen: now });
   }
 
   pruneTogether(room);
@@ -216,7 +236,7 @@ function handleTogether(req, res) {
   const members = [];
   if (m) for (const [mid, v] of m) {
     if (mid === id) continue; // the caller already knows their own position
-    members.push({ id: mid, name: v.name, lat: v.lat, lng: v.lng, acc: v.acc ?? null, ts: v.ts });
+    members.push({ id: mid, name: v.name, lat: v.lat, lng: v.lng, acc: v.acc ?? null, role: v.role || "car", ts: v.ts });
   }
   res.json({ ok: true, members, serverTime: Date.now() });
 }
@@ -479,5 +499,6 @@ export {
   finiteIn,
   TOGETHER_TTL_MS,
   TOGETHER_MAX_MEMBERS,
+  TOGETHER_MAX_VIEWERS,
   TOGETHER_MAX_ROOMS,
 };
