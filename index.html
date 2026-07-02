@@ -895,7 +895,7 @@
     //  Config — dates are computed dynamically from the start date
     // ============================================================
     const TRIP_START = "2026-07-04";           // Day 1; each later day = +1 calendar day
-    const APP_VERSION = "v63";                  // front-end build — keep in lock-step with sw.js VERSION
+    const APP_VERSION = "v64";                  // front-end build — keep in lock-step with sw.js VERSION
     // Drop the one-shot cache-bust param left by a hard reload so the URL stays clean.
     if (/[?&]fresh=/.test(location.search)) { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
     const DAY_COLORS = ["#0288D1", "#E65100", "#9C27B0", "#2E7D32", "#00838F", "#AD1457", "#5D4037"];
@@ -3899,6 +3899,16 @@
       try { localStorage.removeItem("viewerMode"); } catch { /* ignore */ }
       renderTogether();
     }
+    // Full "forget me on this device" — clears BOTH a bound car identity AND any viewer
+    // state (so a device that only ever viewed can still reset, symmetric with the cars).
+    // After this the picker is wide open again: pick any car, or view afresh.
+    function resetDevice() {
+      sendLeave();
+      viewerMode = false; togetherName = ""; myIdentity = ""; togetherId = ""; viewerId = "";
+      try { ["togetherName", "myIdentity", "viewerMode", "viewerId"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+      renderTogether();
+      updatePushIdentity();
+    }
     // One live roster row for a car — extracted so both the car HUD and the viewer
     // HUD render the fleet identically (distance/direction/place/coords/staleness).
     function carMemberRowHtml(mb) {
@@ -3982,10 +3992,12 @@
         html += `<div class="tg-sec">👁️ Also watching</div>`;
         viewers.forEach((mb) => { html += viewerRowHtml(mb); });
       }
-      html += `<div class="tg-hint">You're a viewer — you see the three cars but you're not part of the fleet. Your location is shared so the family knows who's watching. Max 2 viewers.</div>`;
+      html += `<div class="tg-hint">You're a viewer — you see the three cars but you're not part of the fleet. Your location is shared so the family knows who's watching. Max 2 viewers. <button type="button" class="tg-reset" id="tgViewReset">Reset this device</button></div>`;
       el.innerHTML = html;
       const vs = document.getElementById("tgViewStop");
       if (vs) vs.addEventListener("click", leaveViewer);
+      const vr = document.getElementById("tgViewReset");
+      if (vr) vr.addEventListener("click", resetDevice);
       maybeSpeakFamily(false);
     }
     function renderTogether() {
@@ -4007,6 +4019,7 @@
         });
         const activeCount = (togetherMembers || []).filter((m) => m.role !== "viewer").length;
         const bound = (myIdentity || "").trim().toLowerCase();   // this device's person, once chosen
+        const hasViewerHist = (() => { try { return !!localStorage.getItem("viewerId"); } catch { return false; } })(); // has viewed before
         const header = bound
           ? `👫 Together mode · you are ${chatEsc(myIdentity)}`
           : `👫 Together mode · pick your name`;
@@ -4038,7 +4051,7 @@
         html += `</div>`;
         html += bound
           ? `<div class="tg-hint">This device is set up as <b>${chatEsc(myIdentity)}</b> — only your own name shares your location, so you can't be mixed up with another car. <button type="button" class="tg-reset" id="tgReset">Not ${chatEsc(myIdentity)}? Reset this device</button></div>`
-          : `<div class="tg-hint">${activeCount ? `${activeCount} already sharing live from their own device. ` : ""}Pick your name — it locks to this device, so you'll always share as you. Visible to family only while Together mode is on.</div>`;
+          : `<div class="tg-hint">${activeCount ? `${activeCount} already sharing live from their own device. ` : ""}Pick your name — it locks to this device, so you'll always share as you. Visible to family only while Together mode is on.${hasViewerHist ? ` <button type="button" class="tg-reset" id="tgReset">Reset this device</button>` : ""}</div>`;
         // --- Viewer mode — anybody can just watch the three cars (no fleet identity). ---
         // Sharing your own location is required so the family sees who's watching, and
         // only 2 viewers are allowed. A device already bound to a car must Stop sharing
@@ -4057,11 +4070,7 @@
         el.innerHTML = html;
         el.querySelectorAll(".tg-pick:not([disabled])").forEach((b) => b.addEventListener("click", () => joinTogether(b.dataset.name)));
         const rb = document.getElementById("tgReset");
-        if (rb) rb.addEventListener("click", () => {
-          myIdentity = "";
-          try { localStorage.removeItem("myIdentity"); } catch { /* ignore */ }
-          renderTogether();
-        });
+        if (rb) rb.addEventListener("click", resetDevice);
         const vj = document.getElementById("tgViewJoin");
         if (vj) vj.addEventListener("click", joinAsViewer);
         return;
